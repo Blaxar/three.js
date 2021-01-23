@@ -12,7 +12,6 @@ import {
 	Loader,
 	Material,
 	Mesh,
-	MeshPhongMaterial,
 	Points,
 	PointsMaterial,
   Vector2,  
@@ -71,7 +70,7 @@ var triangulateKFacesWithShapes = (function () {
 
   var _basis = new Matrix4();
 
-  return function (vertices, loops) {
+  return function (vertices, loops, loop_signatures = []) {
 
     let new_vertices = [];
     let faces = [];
@@ -135,9 +134,11 @@ var triangulateKFacesWithShapes = (function () {
       }
 
       for (let i = 0, l_faces = geometry.faces.length; i < l_faces; i++) {
-        faces.push(new Face3(geometry.faces[i].a + offset,
+        let face = new Face3(geometry.faces[i].a + offset,
                              geometry.faces[i].b + offset,
-                             geometry.faces[i].c + offset));
+                             geometry.faces[i].c + offset);
+        face.materialIndex = loop_signatures[lid];
+        faces.push(face);
       }
 
       offset += geometry.vertices.length;
@@ -152,7 +153,7 @@ var RwxState = ( function () {
 
   function RwxState() {
     // Material related properties start here
-    this.color = [0.0, 0.0, 0.0]; // Red, Green, Blue
+    this.color = 0x000000; // Red, Green, Blue
     this.surface = [0.0, 0.0, 0.0]; // Ambience, Diffusion, Specularity
     this.opacity = 1.0;
     this.lightsampling = LightSampling.FACET;
@@ -162,13 +163,28 @@ var RwxState = ( function () {
     this.texture = null;
     this.mask = null;
     // End of material related properties
-        
+
     this.transform = new Matrix4();
   }
 
   RwxState.prototype = {
 
-    constructor: RwxState
+    constructor: RwxState,
+
+    get_mat_signature : function () {
+      let sign = this.color[0].toFixed(3) + this.color[1].toFixed(3) + this.color[2].toFixed(3);
+      sign += this.surface[0].toFixed(3) + this.surface[1].toFixed(3) + this.surface[2].toFixed(3);
+      sign += this.opacity.toFixed(3);
+      sign += this.lightsampling.toString() + this.geometrysampling.toString()
+      this.texturemodes.forEach((tm) => {
+        sign += tm.toString();
+      });
+      sign += this.materialmode.toString();
+
+      // TODO: handle textures
+
+      return sign;
+    }
 
   };
 
@@ -214,12 +230,6 @@ var RwxShape = ( function () {
 
     constructor: RwxShape,
 
-    as_loop: function () {
-
-      return this.vertices_id;
-
-    }
-
   };
 
   return RwxShape;
@@ -239,9 +249,25 @@ var RwxTriangle = ( function () {
 
     constructor: RwxTriangle,
 
-    as_faces: function () {
+    as_triangles: function ( offset = 0 ) {
 
-      return [[this.vertices_id[0], this.vertices_id[1], this.vertices_id[2]]];
+      if (offset)
+      {
+        return [new RwxTriangle(this.vertices_id[0] + offset,
+                                this.vertices_id[1] + offset,
+                                this.vertices_id[2] + offset,
+                                this.state)];
+      }
+      else
+      {
+        return [this];
+      }
+
+    },
+
+    as_face3: function ( offset = 0 ) {
+
+        return new Face3(this.vertices_id[0], this.vertices_id[1], this.vertices_id[2]);
 
     }
 
@@ -264,10 +290,16 @@ var RwxQuad = ( function () {
 
     constructor: RwxQuad,
 
-    as_faces: function () {
+    as_triangles: function ( offset = 0 ) {
 
-      return [[this.vertices_id[0], this.vertices_id[1], this.vertices_id[2]],
-              [this.vertices_id[0], this.vertices_id[2], this.vertices_id[3]]];
+      return [new RwxTriangle(this.vertices_id[0] + offset,
+                              this.vertices_id[1] + offset,
+                              this.vertices_id[2] + offset,
+                              this.state),
+              new RwxTriangle(this.vertices_id[0] + offset,
+                              this.vertices_id[2] + offset,
+                              this.vertices_id[3] + offset,
+                              this.state)];
 
     }
 
@@ -293,6 +325,22 @@ var RwxPolygon = ( function () {
 
     constructor: RwxPolygon,
 
+    as_loop: function ( offset = 0 ) {
+
+      if (offset)
+      {
+        let loop = [];
+        this.vertice_id.forEach((id) => {
+          loop.push(id + offset);
+        });
+        return loop;
+      }
+      else
+      {
+        return this.vertices_id;
+      }
+    }
+
   });
 
   return RwxPolygon; 
@@ -316,11 +364,11 @@ var RwxScope = ( function () {
 
     constructor: RwxScope,
 
-    get_faces: function () {
+    get_triangles: function ( offset = 0 ) {
       let faces = [];
       this.shapes.forEach((shape) => {
-        if (typeof shape.as_faces === 'function') { 
-          faces.push(...shape.as_faces());
+        if (typeof shape.as_triangles === 'function') { 
+          faces.push(...shape.as_triangles(offset));
         }
       });
 
@@ -330,8 +378,8 @@ var RwxScope = ( function () {
     get_polys: function () {
       let polys = [];
       this.shapes.forEach((shape) => {
-        if (typeof shape.as_faces === 'undefined') {
-          polys.push(shape.as_loop());
+        if (typeof shape.as_loop === 'function') {
+          polys.push(shape);
         }
       });
 
@@ -358,7 +406,6 @@ var RwxClump = ( function () {
     constructor: RwxClump,
 
     apply_proto: function (proto) {
-
       let offset = this.vertices.length;
 
       let shapes = [];
@@ -426,34 +473,65 @@ var gather_vertices_recursive = function( clump ) {
 
 }
 
-var gather_faces_recursive = function(clump, offset=0) {
+var gather_faces_recursive = function(clump, materials_map = {}, offset = 0) {
 
-  let faces = []
-  let polys = []
-  let tmp_faces = clump.get_faces();
+  let faces = [];
+  let tmp_faces = [];
+  let loops = [];
+  let loop_signatures = [];
+  let poly_signatures = [];
+  let tmp_loops = [];
+  let tmp_loop_signatures = [];
+  let tmp_triangles = clump.get_triangles(offset);
   let tmp_polys = clump.get_polys();
 
-  tmp_faces.forEach((tmp_face) => {
-    faces.push(new Face3(tmp_face[0]+offset, tmp_face[1]+offset, tmp_face[2]+offset));
+  tmp_triangles.forEach((tmp_triangle) => {
+    let face = tmp_triangle.as_face3();
+    face.materialIndex = materials_map[tmp_triangle.state.get_mat_signature()];
+    faces.push(face);
   });
 
   tmp_polys.forEach((tmp_poly) => {
     let loop = [];
-    tmp_poly.forEach((vertice_id) => {
+    tmp_poly.as_loop().forEach((vertice_id) => {
       loop.push(vertice_id+offset);
     });
-    polys.push(loop);
+    loops.push(loop);
+    loop_signatures.push(materials_map[tmp_poly.state.get_mat_signature()]);  
   });
 
   offset += clump.vertices.length;
 
-  clump.clumps.forEach((c) => {
-    [tmp_faces, tmp_polys, offset] = gather_faces_recursive(c, offset);
+  clump.clumps.forEach((c) => { 
+    [tmp_faces, tmp_loops, tmp_loop_signatures, offset] = gather_faces_recursive(c, materials_map, offset);
     faces.push(...tmp_faces);
-    polys.push(...tmp_polys);
-  });  
+    loops.push(...tmp_loops);
+    loop_signatures.push(...tmp_loop_signatures);
+  });
 
-  return [faces, polys, offset];
+  return [faces, loops, loop_signatures, offset];
+
+}
+
+var make_materials_recursive = function(clump, folder = ".", materials_map = {}, tex_extension = "jpg", mask_extension = "zip"){
+
+  clump.shapes.forEach((shape) => {
+    let mat_sign = shape.state.get_mat_signature();
+
+    if (materials_map[mat_sign] === undefined)
+    {
+      let material_color = (Math.trunc(shape.state.color[0] * 255) << 16) + (Math.trunc(shape.state.color[1] * 255) << 8) + Math.trunc(shape.state.color[2] * 255);
+      // TODO: create material from actual parsed properties
+      materials_map[mat_sign] = new MeshBasicMaterial({color: material_color });
+    }
+  });
+
+  clump.clumps.forEach((sub_clump) => {
+    materials_map = Object.assign({}, materials_map,
+      make_materials_recursive(sub_clump, folder, materials_map, tex_extension, mask_extension));
+  });
+
+  return materials_map;
 
 }
 
@@ -801,25 +879,29 @@ var RWXLoader = ( function () {
       let geometry = new Geometry();
       geometry.vertices.push(...gather_vertices_recursive(rwx_clump_stack[0].clumps[0]));
 
-      let [faces, polys, offset] = gather_faces_recursive(rwx_clump_stack[0].clumps[0])
+      let materials_map = make_materials_recursive(rwx_clump_stack[0].clumps[0]);
+
+      let materials_list = [];
+
+      // make a material list
+      let i = 0;  
+      Object.keys(materials_map).forEach((key) => {
+        materials_list.push(materials_map[key]);
+
+        // replace map entries with corresponding ids in material_list
+        materials_map[key] = i++;  
+      });
+
+      geometry.materials = materials_list;
+
+      let [faces, loops, loop_signatures, offset] = gather_faces_recursive(rwx_clump_stack[0].clumps[0], materials_map)
       geometry.faces.push(...faces);
 
-      let [vertices, new_faces] = triangulateKFacesWithShapes(geometry.vertices, polys);
+      let [vertices, new_faces] = triangulateKFacesWithShapes(geometry.vertices, loops, loop_signatures);
       geometry.vertices.push(...vertices);
       geometry.faces.push(...new_faces);
   
-/*
-      geometry.faces.forEach((face) => {
-        console.log(face);
-      });
-*/
-      geometry.vertices.forEach((point) => {
-        const object = new Mesh( new SphereGeometry(0.001), new MeshBasicMaterial({ color: 0xFF0000 }) );
-        object.position.copy(new Vector3(point.x, point.y, point.z));
-        scene.add( object );
-      });
-
-      const object = new Mesh( geometry, new MeshBasicMaterial({ color: 0xFFFFFF }));
+      const object = new Mesh( geometry, materials_list);
 
       scene.add(object);
 
