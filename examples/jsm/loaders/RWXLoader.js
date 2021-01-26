@@ -70,9 +70,10 @@ var triangulateKFacesWithShapes = (function () {
 
   var _basis = new Matrix4();
 
-  return function (vertices, loops, loop_signatures = []) {
+    return function (vertices, uvs, loops, loop_signatures = []) {
 
     let new_vertices = [];
+    let new_uvs = [];
     let faces = [];
 
     let offset = vertices.length;  
@@ -120,6 +121,7 @@ var triangulateKFacesWithShapes = (function () {
       for (let i = 0; i < l; i++) {
         _tmp.subVectors(vertices[loop[i]], _ctr);
         projVertices.push(new Vector2(_tmp.dot(_x), _tmp.dot(_y)));
+        new_uvs.push([uvs[loop[i]].u, uvs[loop[i]].v]);
       }
 
       // create the geometry (Three.js triangulation with ShapeBufferGeometry)
@@ -127,7 +129,7 @@ var triangulateKFacesWithShapes = (function () {
       let geometry = new ShapeGeometry(shape);
 
       // transform geometry back to the initial coordinate system
-      geometry.applyMatrix(_basis);
+      geometry.applyMatrix4(_basis);
 
       for (let i = 0, l_vertices = geometry.vertices.length; i < l_vertices; i++) {
         new_vertices.push(geometry.vertices[i]);
@@ -145,7 +147,7 @@ var triangulateKFacesWithShapes = (function () {
 
     }
 
-    return [new_vertices, faces];
+    return [new_vertices, new_vertices, faces];
   };
 })();
 
@@ -267,7 +269,9 @@ var RwxTriangle = ( function () {
 
     as_face3: function ( offset = 0 ) {
 
-        return new Face3(this.vertices_id[0], this.vertices_id[1], this.vertices_id[2]);
+        return new Face3(this.vertices_id[0] + offset,
+                         this.vertices_id[1] + offset,
+                         this.vertices_id[2] + offset);
 
     }
 
@@ -458,18 +462,22 @@ var RwxObject = ( function () {
 var gather_vertices_recursive = function( clump ) {
 
   let vertices = [];
+  let uvs = [];  
   let transform = clump.state.transform;
 
   clump.vertices.forEach( (v) => {
     let vert = (new Vector4(v.x, v.y, v.z, 1)).applyMatrix4(transform);
     vertices.push(new Vector3(vert.x, vert.y, vert.z));
+    uvs.push([v.u, v.v]);
   });
 
   clump.clumps.forEach( (c) => {
-    vertices.push(...gather_vertices_recursive(c));
+    let [tmp_vertices, tmp_uvs] = gather_vertices_recursive(c);    
+    vertices.push(...tmp_vertices);
+    uvs.push(...tmp_uvs);
   });
 
-  return vertices;
+  return [vertices, uvs];
 
 }
 
@@ -494,7 +502,7 @@ var gather_faces_recursive = function(clump, materials_map = {}, offset = 0) {
   tmp_polys.forEach((tmp_poly) => {
     let loop = [];
     tmp_poly.as_loop().forEach((vertice_id) => {
-      loop.push(vertice_id+offset);
+      loop.push(vertice_id + offset);
     });
     loops.push(loop);
     loop_signatures.push(materials_map[tmp_poly.state.get_mat_signature()]);  
@@ -877,7 +885,10 @@ var RWXLoader = ( function () {
       var scene = new Group();
 
       let geometry = new Geometry();
-      geometry.vertices.push(...gather_vertices_recursive(rwx_clump_stack[0].clumps[0]));
+
+      let [vertices, uvs] = gather_vertices_recursive(rwx_clump_stack[0].clumps[0]); 
+
+      geometry.vertices.push(...vertices);
 
       let materials_map = make_materials_recursive(rwx_clump_stack[0].clumps[0]);
 
@@ -897,10 +908,27 @@ var RWXLoader = ( function () {
       let [faces, loops, loop_signatures, offset] = gather_faces_recursive(rwx_clump_stack[0].clumps[0], materials_map)
       geometry.faces.push(...faces);
 
-      let [vertices, new_faces] = triangulateKFacesWithShapes(geometry.vertices, loops, loop_signatures);
-      geometry.vertices.push(...vertices);
+      let [new_vertices, new_uvs, new_faces] = triangulateKFacesWithShapes(geometry.vertices, uvs, loops, loop_signatures);
+      geometry.vertices.push(...new_vertices);
       geometry.faces.push(...new_faces);
-  
+      uvs.push(...new_uvs);
+
+      geometry.faceVertexUvs[0] = [];
+
+      for (let i = 0; i < geometry.faces.length ; i++) {
+        let vid1 = geometry.faces[i].a;
+        let vid2 = geometry.faces[i].b;
+        let vid3 = geometry.faces[i].c;
+
+        geometry.faceVertexUvs[0].push([
+          new Vector2(uvs[vid1][0], uvs[vid1][1]),
+          new Vector2(uvs[vid2][0], uvs[vid2][1]),
+          new Vector2(uvs[vid3][0], uvs[vid3][1])
+        ]);
+      }
+
+      geometry.uvsNeedUpdate = true;
+
       const object = new Mesh( geometry, materials_list);
 
       scene.add(object);
