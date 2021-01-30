@@ -5,29 +5,24 @@
 import {
 	BufferGeometry,
 	FileLoader,
-	Float32BufferAttribute,
-	Group,
-	LineBasicMaterial,
-	LineSegments,
 	Loader,
-	Material,
 	Mesh,
-	Points,
-	PointsMaterial,
   Vector2,  
 	Vector3,
   Face3,  
   Matrix4,
   Vector4,
   MathUtils,
-  BoxBufferGeometry,
-  MeshBasicMaterial,
+  MeshPhongMaterial,
   Geometry,
-  SphereGeometry,
   Quaternion,
   Plane,
   Shape,
-  ShapeGeometry
+  ShapeGeometry,
+  TextureLoader,
+  RepeatWrapping,
+  FrontSide,
+  DoubleSide
 } from "../../../build/three.module.js";
 
 const LightSampling = {
@@ -53,7 +48,7 @@ const MaterialMode = {
   DOUBLE: 2
 }
 
-var triangulateKFacesWithShapes = (function () {
+var triangulate_faces_with_shapes = (function () {
   // Mostly crediting @neeh for their answer: https://stackoverflow.com/a/42402681
   var _ctr = new Vector3();
 
@@ -70,7 +65,7 @@ var triangulateKFacesWithShapes = (function () {
 
   var _basis = new Matrix4();
 
-    return function (vertices, uvs, loops, loop_signatures = []) {
+    return function (vertices, uvs, loops, loop_mat_ids = []) {
 
     let new_vertices = [];
     let new_uvs = [];
@@ -121,7 +116,7 @@ var triangulateKFacesWithShapes = (function () {
       for (let i = 0; i < l; i++) {
         _tmp.subVectors(vertices[loop[i]], _ctr);
         projVertices.push(new Vector2(_tmp.dot(_x), _tmp.dot(_y)));
-        new_uvs.push([uvs[loop[i]].u, uvs[loop[i]].v]);
+        new_uvs.push([uvs[loop[i]][0], uvs[loop[i]][1]]);
       }
 
       // create the geometry (Three.js triangulation with ShapeBufferGeometry)
@@ -139,7 +134,7 @@ var triangulateKFacesWithShapes = (function () {
         let face = new Face3(geometry.faces[i].a + offset,
                              geometry.faces[i].b + offset,
                              geometry.faces[i].c + offset);
-        face.materialIndex = loop_signatures[lid];
+        face.materialIndex = loop_mat_ids[lid];
         faces.push(face);
       }
 
@@ -147,7 +142,7 @@ var triangulateKFacesWithShapes = (function () {
 
     }
 
-    return [new_vertices, new_vertices, faces];
+    return [new_vertices, new_uvs, faces];
   };
 })();
 
@@ -183,7 +178,10 @@ var RwxState = ( function () {
       });
       sign += this.materialmode.toString();
 
-      // TODO: handle textures
+      if (this.texture != null)
+      {
+        sign += this.texture
+      }
 
       return sign;
     }
@@ -521,22 +519,56 @@ var gather_faces_recursive = function(clump, materials_map = {}, offset = 0) {
 
 }
 
-var make_materials_recursive = function(clump, folder = ".", materials_map = {}, tex_extension = "jpg", mask_extension = "zip"){
+var make_materials_recursive = function(clump, folder, materials_map = {}, tex_extension = "jpg", mask_extension = "zip"){
 
   clump.shapes.forEach((shape) => {
     let mat_sign = shape.state.get_mat_signature();
 
     if (materials_map[mat_sign] === undefined)
     {
-      let material_color = (Math.trunc(shape.state.color[0] * 255) << 16) + (Math.trunc(shape.state.color[1] * 255) << 8) + Math.trunc(shape.state.color[2] * 255);
-      // TODO: create material from actual parsed properties
-      materials_map[mat_sign] = new MeshBasicMaterial({color: material_color });
+      let material_dict = {};
+
+      if (shape.state.materialmode == MaterialMode.DOUBLE)
+      {
+        material_dict['side'] = DoubleSide;
+      }
+      else if (shape.state.materialmode == MaterialMode.NULL)
+      {
+        material_dict['visible'] = false;
+      }
+
+      if (shape.state.opacity < 1.0)
+      {
+        material_dict['transparent'] = true;
+      }
+
+      material_dict['specular'] = 0xffffff;
+      material_dict['emissiveIntensity'] = shape.state.surface[1];
+      material_dict['shininess'] = shape.state.surface[2] * 30; // '30' is the default Phong material shininess value
+      material_dict['opacity'] = shape.state.opacity;
+
+      if(shape.state.texture == null)
+      {
+        material_dict['color'] = (Math.trunc(shape.state.color[0] * 255) << 16) + (Math.trunc(shape.state.color[1] * 255) << 8) + Math.trunc(shape.state.color[2] * 255);
+      }
+      else
+      {
+        // TODO: try to instanciate once
+        let loader = new TextureLoader();
+        let texture_path = folder + '/' + shape.state.texture + '.' + tex_extension;
+        let texture = loader.load(texture_path);
+        texture.wrapS = RepeatWrapping;
+        texture.wrapT= RepeatWrapping;
+        material_dict['map'] = texture;
+      }
+
+      materials_map[mat_sign] = new MeshPhongMaterial(material_dict);
     }
   });
 
   clump.clumps.forEach((sub_clump) => {
     materials_map = Object.assign({}, materials_map,
-      make_materials_recursive(sub_clump, folder, materials_map, tex_extension, mask_extension));
+    make_materials_recursive(sub_clump, folder, materials_map, tex_extension, mask_extension));
   });
 
   return materials_map;
@@ -582,7 +614,7 @@ var RWXLoader = ( function () {
 
 		constructor: RWXLoader,
 
-    load: function ( url, onLoad, onProgress, onError ) {
+    load: function ( rwx_url, texture_folder_url, onLoad, onProgress, onError ) {
 
 			var scope = this;
 
@@ -590,11 +622,11 @@ var RWXLoader = ( function () {
 			loader.setPath( this.path );
 			loader.setRequestHeader( this.requestHeader );
 			loader.setWithCredentials( this.withCredentials );
-			loader.load( url, function ( text ) {
+			loader.load( rwx_url, function ( text ) {
 
-        try {
+      try {
 
-          onLoad( scope.parse( text ) );
+          onLoad( scope.parse( text, texture_folder_url ) );
 
 			  } catch ( e ) {
 
@@ -608,7 +640,7 @@ var RWXLoader = ( function () {
 
 				  }
 
-				  scope.manager.itemError( url );
+				  scope.manager.itemError( rwx_url );
 
 			  }
 
@@ -616,7 +648,7 @@ var RWXLoader = ( function () {
 
 		},
 
-    parse: function ( str ) {
+    parse: function ( str, texture_folder_url ) {
 
 	    var vA = new Vector3();
 	    var vB = new Vector3();
@@ -657,7 +689,7 @@ var RWXLoader = ( function () {
 
         res = this.clumpbegin_regex.exec(line);
         if (res != null) {
-          let rwx_clump = new RwxClump(state = current_scope.state)
+          let rwx_clump = new RwxClump(current_scope.state)
           rwx_clump_stack.slice(-1)[0].clumps.push(rwx_clump);
           rwx_clump_stack.push(rwx_clump);
           current_scope = rwx_clump;
@@ -674,7 +706,7 @@ var RWXLoader = ( function () {
         res = this.protobegin_regex.exec(line);
         if (res != null) {
           let name = res[2];
-          rwx_proto_dict[name] = new RwxScope(state = current_scope.state);
+          rwx_proto_dict[name] = new RwxScope(current_scope.state);
           current_scope = rwx_proto_dict[name];
           continue;
         }
@@ -709,8 +741,7 @@ var RWXLoader = ( function () {
           res[2].match(this.integer_regex).forEach( (entry) => {
             v_id.push(parseInt(entry)-1);
           });
-          current_scope.shapes.push(new RwxTriangle(v_id[0], v_id[1], v_id[2],
-                                                    state=current_scope.state));
+          current_scope.shapes.push(new RwxTriangle(v_id[0], v_id[1], v_id[2], current_scope.state));
           continue;
         }
 
@@ -720,8 +751,7 @@ var RWXLoader = ( function () {
           res[2].match(this.integer_regex).forEach( (entry) => {
             v_id.push(parseInt(entry)-1);
           });
-          current_scope.shapes.push(new RwxQuad(v_id[0], v_id[1], v_id[2], v_id[3],
-                                                state=current_scope.state));
+          current_scope.shapes.push(new RwxQuad(v_id[0], v_id[1], v_id[2], v_id[3], current_scope.state));
           continue;
         }
 
@@ -732,8 +762,7 @@ var RWXLoader = ( function () {
           res[3].match(this.integer_regex).forEach( (id) => {
             v_id.unshift(parseInt(id)-1);
           });
-          current_scope.shapes.push(new RwxPolygon(v_id.slice(0, v_len),
-                                                   state=current_scope.state));
+          current_scope.shapes.push(new RwxPolygon(v_id.slice(0, v_len), current_scope.state));
           continue;
         }
 
@@ -751,7 +780,7 @@ var RWXLoader = ( function () {
             });
 
             current_scope.vertices.push(new RwxVertex(vprops[0], vprops[1], vprops[2],
-                                                      more_vprops[0], vprops[1]));
+                                                      more_vprops[0], 1.0-more_vprops[1]));
           } else {
 
             current_scope.vertices.push(new RwxVertex(vprops[0], vprops[1], vprops[2]));
@@ -870,27 +899,13 @@ var RWXLoader = ( function () {
         }
       }
 
-      var state = {
-			  object: {},
-
-		  	vertices: [],
-			  normals: [],
-		  	colors: [],
-		  	uvs: [],
-
-			  materials: {},
-		  	materialLibraries: [],
-		  };
-
-      var scene = new Group();
-
       let geometry = new Geometry();
 
       let [vertices, uvs] = gather_vertices_recursive(rwx_clump_stack[0].clumps[0]); 
 
       geometry.vertices.push(...vertices);
 
-      let materials_map = make_materials_recursive(rwx_clump_stack[0].clumps[0]);
+      let materials_map = make_materials_recursive(rwx_clump_stack[0].clumps[0], texture_folder_url);
 
       let materials_list = [];
 
@@ -908,7 +923,7 @@ var RWXLoader = ( function () {
       let [faces, loops, loop_signatures, offset] = gather_faces_recursive(rwx_clump_stack[0].clumps[0], materials_map)
       geometry.faces.push(...faces);
 
-      let [new_vertices, new_uvs, new_faces] = triangulateKFacesWithShapes(geometry.vertices, uvs, loops, loop_signatures);
+      let [new_vertices, new_uvs, new_faces] = triangulate_faces_with_shapes(geometry.vertices, uvs, loops, loop_signatures);
       geometry.vertices.push(...new_vertices);
       geometry.faces.push(...new_faces);
       uvs.push(...new_uvs);
@@ -928,12 +943,11 @@ var RWXLoader = ( function () {
       }
 
       geometry.uvsNeedUpdate = true;
+      geometry.computeVertexNormals();
 
-      const object = new Mesh( geometry, materials_list);
+      const object = new Mesh( geometry, materials_list );
 
-      scene.add(object);
-
-      return scene;
+      return object;
     }
   });
 
