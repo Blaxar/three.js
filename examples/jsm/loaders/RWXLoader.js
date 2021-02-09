@@ -661,8 +661,6 @@ var RWXLoader = ( function () {
 
 		Loader.call( this, manager );
 
-		this.materials = null;
-
 		this.integerRegex = new RegExp( "([-+]?[0-9]+)", 'g' );
 		this.floatRegex = new RegExp( "([+-]?([0-9]+([.][0-9]*)?|[.][0-9]+))", 'g' );
 		this.nonCommentRegex = new RegExp( "^(.*)#", 'g' );
@@ -1096,8 +1094,6 @@ var RWXLoader = ( function () {
 				materialMap[ key ] = i ++;
 
 			} );
-
-			geometry.materials = materialsList;
 
 			var [ faces, loops, loopSignatures, offset ] = gatherFacesRecursive( rwxClumpStack[ 0 ].clumps[ 0 ],
 				materialMap );
