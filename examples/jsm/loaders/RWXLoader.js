@@ -167,7 +167,7 @@ var RWXLoader = ( function () {
 		function RWXState() {
 
 			// Material related properties start here
-			this.color = 0x000000; // Red, Green, Blue
+			this.color = [0.0, 0.0, 0.0]; // Red, Green, Blue
 			this.surface = [ 0.0, 0.0, 0.0 ]; // Ambience, Diffusion, Specularity
 			this.opacity = 1.0;
 			this.lightsampling = LightSampling.FACET;
