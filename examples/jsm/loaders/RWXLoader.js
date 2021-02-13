@@ -22,7 +22,9 @@ import {
 	TextureLoader,
 	RepeatWrapping,
 	FrontSide,
-	DoubleSide
+	DoubleSide,
+	ImageBitmapLoader,
+	Texture
 } from "../../../build/three.module.js";
 
 var RWXLoader = ( function () {
@@ -167,7 +169,7 @@ var RWXLoader = ( function () {
 		function RWXState() {
 
 			// Material related properties start here
-			this.color = [0.0, 0.0, 0.0]; // Red, Green, Blue
+			this.color = [ 0.0, 0.0, 0.0 ]; // Red, Green, Blue
 			this.surface = [ 0.0, 0.0, 0.0 ]; // Ambience, Diffusion, Specularity
 			this.opacity = 1.0;
 			this.lightsampling = LightSampling.FACET;
@@ -548,7 +550,6 @@ var RWXLoader = ( function () {
 		var tmpFaces = [];
 		var loops = [];
 		var loopSignatures = [];
-		var polySignatures = [];
 		var tmpLoops = [];
 		var tmpLoopsignatures = [];
 		var tmpTriangles = clump.getTriangles( offset );
@@ -591,7 +592,7 @@ var RWXLoader = ( function () {
 	};
 
 	var makeMaterialsRecursive = function ( clump, folder, materialMap = {}, texExtension = "jpg", maskExtension =
-	"zip" ) {
+	"zip", jsZip = null, jsZipUtils = null ) {
 
 		clump.shapes.forEach( ( shape ) => {
 
@@ -620,13 +621,15 @@ var RWXLoader = ( function () {
 				materialDict[ 'specular' ] = 0xffffff;
 				materialDict[ 'emissiveIntensity' ] = shape.state.surface[ 1 ];
 				materialDict[ 'shininess' ] = shape.state.surface[ 2 ] *
-          30; // '30' is the default Phong material shininess value
+				30; // '30' is the default Phong material shininess value
 				materialDict[ 'opacity' ] = shape.state.opacity;
+
+				var phongMat = new MeshPhongMaterial( materialDict );
 
 				if ( shape.state.texture == null ) {
 
-					materialDict[ 'color' ] = ( Math.trunc( shape.state.color[ 0 ] * 255 ) << 16 ) + ( Math.trunc( shape.state
-						.color[ 1 ] * 255 ) << 8 ) + Math.trunc( shape.state.color[ 2 ] * 255 );
+					phongMat.color.set( ( Math.trunc( shape.state.color[ 0 ] * 255 ) << 16 ) + ( Math.trunc( shape.state
+						.color[ 1 ] * 255 ) << 8 ) + Math.trunc( shape.state.color[ 2 ] * 255 ) );
 
 				} else {
 
@@ -636,11 +639,76 @@ var RWXLoader = ( function () {
 					var texture = loader.load( texturePath );
 					texture.wrapS = RepeatWrapping;
 					texture.wrapT = RepeatWrapping;
-					materialDict[ 'map' ] = texture;
+					phongMat.map = texture;
+
+					if ( shape.state.mask != null ) {
+
+						phongMat.alphaTest = 0.2;
+						phongMat.transparent = true;
+
+						if ( maskExtension == "zip" && jsZip != null && jsZipUtils != null ) {
+
+							// We try to extract the bmp mask from the archive
+							const zipPath = folder + '/' + shape.state.mask + '.' + maskExtension;
+
+							// We load the mask asynchronously using JSZip and JSZipUtils (if available)
+							new jsZip.external.Promise( function ( resolve, reject ) {
+
+								jsZipUtils.getBinaryContent( zipPath, function ( err, data ) {
+
+									if ( err ) {
+
+										reject( err );
+
+									} else {
+
+										resolve( data );
+
+									}
+
+								} );
+
+							} ).then( jsZip.loadAsync ).then( function ( zip ) {
+
+								// Chain with the bmp content promise
+								return zip.file( shape.state.mask + '.bmp' ).async( "uint8array" );
+
+							} ).then( function success( buffer ) {
+
+								// Load the bmp image into a data uri string
+								const bmpURI = "data:image/bmp;base64," +
+									btoa( String.fromCharCode.apply( null, new Uint16Array( buffer ) ) );
+
+								// Make a texture out of the bmp mask, apply it to the material
+								var maskTexture = loader.load( bmpURI );
+								maskTexture.wrapS = RepeatWrapping;
+								maskTexture.wrapT = RepeatWrapping;
+								phongMat.alphaMap = maskTexture;
+
+								// Notify three.js that this material has been updated (to re-render it).
+								phongMat.needsUpdate = true;
+
+							}, function error( e ) {
+
+								throw e;
+
+							} );
+
+						} else if ( maskExtension != 'zip' ) {
+
+							var bmpPath = folder + '/' + shape.state.mask + '.' + maskExtension;
+							var maskTexture = loader.load( bmpPath );
+							maskTexture.wrapS = RepeatWrapping;
+							maskTexture.wrapT = RepeatWrapping;
+							phongMat.alphaMap = maskTexture;
+
+						}
+
+					}
 
 				}
 
-				materialMap[ matSign ] = new MeshPhongMaterial( materialDict );
+				materialMap[ matSign ] = phongMat;
 
 			}
 
@@ -649,7 +717,7 @@ var RWXLoader = ( function () {
 		clump.clumps.forEach( ( subClump ) => {
 
 			materialMap = Object.assign( {}, materialMap,
-				makeMaterialsRecursive( subClump, folder, materialMap, texExtension, maskExtension ) );
+				makeMaterialsRecursive( subClump, folder, materialMap, texExtension, maskExtension, jsZip, jsZipUtils ) );
 
 		} );
 
@@ -687,6 +755,7 @@ var RWXLoader = ( function () {
 		this.ambientRegex = new RegExp( "^ *(ambient)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$", 'i' );
 		this.diffuseRegex = new RegExp( "^ *(diffuse)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$", 'i' );
 		this.specularRegex = new RegExp( "^ *(specular)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$", 'i' );
+		this.materialModeRegex = new RegExp( "^ *((add)?materialmode(s)?) +([A-Za-z0-9_\\-]+).*$", 'i' );
 
 	}
 
@@ -694,10 +763,42 @@ var RWXLoader = ( function () {
 
 		constructor: RWXLoader,
 
+		jsZip: null,
+
+		jsZipUtils: null,
+
+		texExtension: 'jpg',
+
+		maskExtension: 'zip',
+
+		setJSZip: function ( jsZip, jsZipUtils ) {
+
+			this.jsZip = jsZip;
+			this.jsZipUtils = jsZipUtils;
+
+			return this;
+
+		},
+
+		setTexExtension: function ( texExtension ) {
+
+			this.texExtension = texExtension;
+
+			return this;
+
+		},
+
+		setMaskExtension: function ( maskExtension ) {
+
+			this.maskExtension = maskExtension;
+
+			return this;
+
+		},
+
 		load: function ( rwxFile, onLoad, onProgress, onError ) {
 
 			var scope = this;
-
 			var path = this.path;
 			var resourcePath = this.resourcePath;
 
@@ -732,13 +833,6 @@ var RWXLoader = ( function () {
 
 		parse: function ( str, textureFolderPath ) {
 
-			var vA = new Vector3();
-			var vB = new Vector3();
-			var vC = new Vector3();
-
-			var ab = new Vector3();
-			var cb = new Vector3();
-
 			// Parsing RWX file content
 
 			const defaultSurface = [ 0.0, 0.0, 0.0 ];
@@ -762,7 +856,7 @@ var RWXLoader = ( function () {
 				}
 
 				// replace tabs with spaces
-				line = line.trim().replace( '\t', ' ' );
+				line = line.trim().replace( /\t/g, ' ' );
 
 				res = this.modelbeginRegex.exec( line );
 				if ( res != null ) {
@@ -834,7 +928,16 @@ var RWXLoader = ( function () {
 
 					}
 
-					currentScope.state.mask = res[ 4 ];
+					if ( res[ 4 ] !== undefined ) {
+
+						currentScope.state.mask = res[ 4 ];
+
+					} else {
+
+						currentScope.state.mask = null;
+
+					}
+
 					continue;
 
 				}
@@ -980,24 +1083,24 @@ var RWXLoader = ( function () {
 						if ( rprops[ 0 ] ) {
 
 							currentScope.state.transform =
-                rotateM.makeRotationX( MathUtils.degToRad( - rprops[ 3 ] ) ).multiply( currentScope.state
-                	.transform );
+								rotateM.makeRotationX( MathUtils.degToRad( - rprops[ 3 ] ) ).multiply( currentScope.state
+									.transform );
 
 						}
 
 						if ( rprops[ 1 ] ) {
 
 							currentScope.state.transform =
-                rotateM.makeRotationY( MathUtils.degToRad( - rprops[ 3 ] ) ).multiply( currentScope.state
-                	.transform );
+								rotateM.makeRotationY( MathUtils.degToRad( - rprops[ 3 ] ) ).multiply( currentScope.state
+									.transform );
 
 						}
 
 						if ( rprops[ 2 ] ) {
 
 							currentScope.state.transform =
-                rotateM.makeRotationZ( MathUtils.degToRad( - rprops[ 3 ] ) ).multiply( currentScope.state
-                	.transform );
+								rotateM.makeRotationZ( MathUtils.degToRad( - rprops[ 3 ] ) ).multiply( currentScope.state
+									.transform );
 
 						}
 
@@ -1022,7 +1125,7 @@ var RWXLoader = ( function () {
 						var scaleM = new Matrix4();
 
 						currentScope.state.transform =
-              scaleM.makeScale( sprops[ 0 ], sprops[ 1 ], sprops[ 2 ] ).multiply( currentScope.state.transform );
+							scaleM.makeScale( sprops[ 0 ], sprops[ 1 ], sprops[ 2 ] ).multiply( currentScope.state.transform );
 
 					}
 
@@ -1048,7 +1151,6 @@ var RWXLoader = ( function () {
 				res = this.ambientRegex.exec( line );
 				if ( res != null ) {
 
-					var surf = currentScope.state.surface;
 					currentScope.state.surface[ 0 ] = parseFloat( res[ 2 ] );
 					continue;
 
@@ -1057,7 +1159,6 @@ var RWXLoader = ( function () {
 				res = this.diffuseRegex.exec( line );
 				if ( res != null ) {
 
-					var surf = currentScope.state.surface;
 					currentScope.state.surface[ 1 ] = parseFloat( res[ 2 ] );
 					continue;
 
@@ -1066,8 +1167,30 @@ var RWXLoader = ( function () {
 				res = this.specularRegex.exec( line );
 				if ( res != null ) {
 
-					var surf = currentScope.state.surface;
 					currentScope.state.surface[ 2 ] = parseFloat( res[ 2 ] );
+					continue;
+
+				}
+
+				res = this.materialModeRegex.exec( line );
+				if ( res != null ) {
+
+					const matMode = res[ 4 ].toLowerCase();
+
+					if ( matMode == "none" ) {
+
+						currentScope.state.materialmode = MaterialMode.NONE;
+
+					} else if ( matMode == "null" ) {
+
+						currentScope.state.materialmode = MaterialMode.NULL;
+
+					} else if ( matMode == "double" ) {
+
+						currentScope.state.materialmode = MaterialMode.DOUBLE;
+
+					}
+
 					continue;
 
 				}
@@ -1080,7 +1203,7 @@ var RWXLoader = ( function () {
 
 			geometry.vertices.push( ...vertices );
 
-			var materialMap = makeMaterialsRecursive( rwxClumpStack[ 0 ].clumps[ 0 ], textureFolderPath );
+			var materialMap = makeMaterialsRecursive( rwxClumpStack[ 0 ].clumps[ 0 ], textureFolderPath, {}, this.texExtension, this.maskExtension, this.jsZip, this.jsZipUtils );
 
 			var materialsList = [];
 
@@ -1129,6 +1252,7 @@ var RWXLoader = ( function () {
 			return object;
 
 		}
+
 	} );
 
 	return RWXLoader;
