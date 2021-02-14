@@ -474,6 +474,9 @@ var RWXLoader = ( function () {
 
 				shapes.forEach( ( shape ) => {
 
+					// Collision status of the clump takes precedence over the one from the proto
+					shape.state.collision = this.state.collision;
+
 					for ( var i = 0; i < shape.verticesId.length; i ++ ) {
 
 						shape.verticesId[ i ] += offset;
