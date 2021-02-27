@@ -24,7 +24,8 @@ import {
 	FrontSide,
 	DoubleSide,
 	ImageBitmapLoader,
-	Texture
+	Texture,
+	Group
 } from "../../../build/three.module.js";
 
 var RWXLoader = ( function () {
@@ -849,6 +850,11 @@ var RWXLoader = ( function () {
 
 			const defaultSurface = [ 0.0, 0.0, 0.0 ];
 
+      var groupStack = [];
+      var currentGroup = null;
+
+      var currentGeometry = null;
+
 			var rwxClumpStack = [];
 			var rwxProtoDict = {};
 			var currentScope = null;
@@ -873,8 +879,11 @@ var RWXLoader = ( function () {
 				res = this.modelbeginRegex.exec( line );
 				if ( res != null ) {
 
+					groupStack.push(new Group());
+					currentGroup = groupStack.slice( - 1 )[ 0 ];
+
 					rwxClumpStack.push( new RWXObject() );
-					currentScope = rwxClumpStack.slice( - 1 )[ 0 ];
+					currentScope = rwxClumpStack.slice( - 1 )[ 0 ]; 
 					currentScope.state.surface = defaultSurface;
 					continue;
 
@@ -882,6 +891,12 @@ var RWXLoader = ( function () {
 
 				res = this.clumpbeginRegex.exec( line );
 				if ( res != null ) {
+
+					var group = new Group();
+					currentGroup.add( group );
+					groupStack.push( group );
+					currentGroup = groupStack.slice( - 1 )[ 0 ];
+					currentGeometry = new Geometry();
 
 					var rwxClump = new RWXClump( currentScope.state );
 					rwxClumpStack.slice( - 1 )[ 0 ].clumps.push( rwxClump );
@@ -893,6 +908,12 @@ var RWXLoader = ( function () {
 
 				res = this.clumpendRegex.exec( line );
 				if ( res != null ) {
+       
+					currentGroup.add( new Mesh( currentGeometry ) );
+					groupStack.pop();
+					currentGroup = groupStack.slice( - 1 )[ 0 ];
+
+					currentGeometry = null;
 
 					rwxClumpStack.pop();
 					currentScope = rwxClumpStack.slice( - 1 )[ 0 ];
@@ -964,6 +985,8 @@ var RWXLoader = ( function () {
 
 					} );
 					currentScope.shapes.push( new RWXTriangle( vId[ 0 ], vId[ 1 ], vId[ 2 ], currentScope.state ) );
+
+					currentGeometry.faces.push( new Face3( vId[ 0 ], vId[ 1 ], vId[ 2 ] ) );
 					continue;
 
 				}
@@ -978,6 +1001,9 @@ var RWXLoader = ( function () {
 
 					} );
 					currentScope.shapes.push( new RWXQuad( vId[ 0 ], vId[ 1 ], vId[ 2 ], vId[ 3 ], currentScope.state ) );
+
+					currentGeometry.faces.push( new Face3( vId[ 0 ], vId[ 1 ], vId[ 2 ] ) );
+					currentGeometry.faces.push( new Face3( vId[ 0 ], vId[ 2 ], vId[ 3 ] ) );
 					continue;
 
 				}
@@ -1006,6 +1032,8 @@ var RWXLoader = ( function () {
 						vprops.push( parseFloat( x ) );
 
 					} );
+
+					currentGeometry.vertices.push( new Vector3( vprops[ 0 ], vprops[ 1 ], vprops[ 2 ] ) );
 
 					if ( typeof ( res[ 7 ] ) != "undefined" ) {
 
@@ -1068,6 +1096,8 @@ var RWXLoader = ( function () {
 					} );
 
 					if ( tprops.length == 16 ) {
+
+						currentGroup.matrix.fromArray( tprops );
 
 						currentScope.state.transform = new Matrix4();
 						currentScope.state.transform.fromArray( tprops );
