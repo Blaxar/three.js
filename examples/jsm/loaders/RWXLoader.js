@@ -28,6 +28,29 @@ import {
 	Group
 } from "../../../build/three.module.js";
 
+var printGroups = function (group, depth = 0)
+{
+	console.log( "  ".repeat( depth ) + group.matrix.elements );
+
+	group.children.forEach( (child) => {
+
+		printGroups( child, depth + 1 );
+
+	} );
+}
+
+var getFinalTransform = function (transformStack)
+{
+	var transform = new Matrix4();
+	transformStack.forEach( (t) => {
+
+		transform.multiply(t);
+
+	} );
+
+	return transform;
+}
+
 var RWXLoader = ( function () {
 
 	var triangulateFacesWithShapes = ( function () {
@@ -165,9 +188,9 @@ var RWXLoader = ( function () {
 		DOUBLE: 2
 	};
 
-	var RWXState = ( function () {
+	var RWXMaterial = ( function () {
 
-		function RWXState() {
+		function RWXMaterial() {
 
 			// Material related properties start here
 			this.color = [ 0.0, 0.0, 0.0 ]; // Red, Green, Blue
@@ -190,7 +213,7 @@ var RWXLoader = ( function () {
 
 		RWXState.prototype = {
 
-			constructor: RWXState,
+			constructor: RWXMaterial,
 
 			getMatSignature: function () {
 
@@ -219,7 +242,157 @@ var RWXLoader = ( function () {
 
 		};
 
-		return RWXState;
+		return RWXMaterial;
+
+	} )();
+
+	var makeThreeMaterial = function ( rwxMaterial, folder, texExtension = "jpg", maskExtension =
+	"zip", jsZip = null, jsZipUtils = null ) {
+
+		var materialDict = {};
+
+		if ( rwxMaterial.materialmode == MaterialMode.DOUBLE ) {
+
+			materialDict[ 'side' ] = DoubleSide;
+
+		} else if ( rwxMaterial.materialmode == MaterialMode.NULL ) {
+
+			materialDict[ 'visible' ] = false;
+
+		}
+
+		if ( rwxMaterial.opacity < 1.0 ) {
+
+			materialDict[ 'transparent' ] = true;
+
+		}
+
+		materialDict[ 'specular' ] = 0xffffff;
+		materialDict[ 'emissiveIntensity' ] = rwxMaterial.surface[ 1 ];
+		materialDict[ 'shininess' ] = rwxMaterial.surface[ 2 ] *
+		30; // '30' is the default Phong material shininess value
+		materialDict[ 'opacity' ] = rwxMaterial.opacity;
+
+		var phongMat = new MeshPhongMaterial( materialDict );
+
+		phongMat.userData[ 'collision' ] = rwxMaterial.collision;
+
+		if ( rwxMaterial.texture == null ) {
+
+			phongMat.color.set( ( Math.trunc( rwxMaterial.color[ 0 ] * 255 ) << 16 ) + ( Math.trunc( rwxMaterial
+				.color[ 1 ] * 255 ) << 8 ) + Math.trunc( rwxMaterial.color[ 2 ] * 255 ) );
+
+		} else {
+
+			// TODO: try to instanciate once
+			var loader = new TextureLoader();
+			var texturePath = folder + '/' + rwxMaterial.texture + '.' + texExtension;
+			var texture = loader.load( texturePath );
+			texture.wrapS = RepeatWrapping;
+			texture.wrapT = RepeatWrapping;
+			phongMat.map = texture;
+
+			if ( rwxMaterial.mask != null ) {
+
+				phongMat.alphaTest = 0.2;
+				phongMat.transparent = true;
+
+				if ( maskExtension == "zip" && jsZip != null && jsZipUtils != null ) {
+
+					// We try to extract the bmp mask from the archive
+					const zipPath = folder + '/' + rwxMaterial.mask + '.' + maskExtension;
+
+					// We load the mask asynchronously using JSZip and JSZipUtils (if available)
+					new jsZip.external.Promise( function ( resolve, reject ) {
+
+						jsZipUtils.getBinaryContent( zipPath, function ( err, data ) {
+
+						if ( err ) {
+
+								reject( err );
+
+							} else {
+
+								resolve( data );
+
+							}
+
+						} );
+
+					} ).then( jsZip.loadAsync ).then( function ( zip ) {
+
+						// Chain with the bmp content promise
+						return zip.file( rwxMaterial.mask + '.bmp' ).async( "uint8array" );
+
+					} ).then( function success( buffer ) {
+
+					// Load the bmp image into a data uri string
+					const bmpURI = "data:image/bmp;base64," +
+					btoa( String.fromCharCode.apply( null, new Uint16Array( buffer ) ) );
+
+					// Make a texture out of the bmp mask, apply it to the material
+					var maskTexture = loader.load( bmpURI );
+					maskTexture.wrapS = RepeatWrapping;
+					maskTexture.wrapT = RepeatWrapping;
+					phongMat.alphaMap = maskTexture;
+
+					// Notify three.js that this material has been updated (to re-render it).
+					phongMat.needsUpdate = true;
+
+				}, function error( e ) {
+
+					throw e;
+
+				} );
+
+			} else if ( maskExtension != 'zip' ) {
+
+				var bmpPath = folder + '/' + rwxMaterial.mask + '.' + maskExtension;
+				var maskTexture = loader.load( bmpPath );
+				maskTexture.wrapS = RepeatWrapping;
+				maskTexture.wrapT = RepeatWrapping;
+				phongMat.alphaMap = maskTexture;
+
+			}
+
+		}
+
+		return phongMat;
+
+  };
+
+	var RWXMaterialManager = ( function () {
+
+		function RWXMaterialManager() {
+
+			this.currentRWXMaterial = new RWXMaterial();
+			this.threeMaterialMap = {}
+
+		}
+
+		RWXMaterialManager.prototype = {
+
+			constructor: RWXMaterialManager,
+
+			getCurrentThreeMaterial: function ( folder, texExtension = "jpg", maskExtension =
+			"zip", jsZip = null, jsZipUtils = null ) {
+
+				/* This gets called when the material is actually required by (at least) one face,
+				* meaning we need to save the material in the map if it's not already done */
+				if ( this.threeMaterialMap[ this.currentRWXMaterial.getMatSignature() ] === undefined ) {
+
+					this.threeMaterialMap[ this.currentRWXMaterial.getMatSignature() ] = makeThreeMaterial( this.currentRWXMaterial,
+          folder, texExtension, maskExtension, jsZip, jsZipUtils );
+
+				}
+
+				return this.threeMaterialMap[ this.currentRWXMaterial.getMatSignature() ];
+
+			}
+
+		};
+
+		return RWXMaterialManager;
 
 	} )();
 
@@ -748,6 +921,8 @@ var RWXLoader = ( function () {
 		this.modelendRegex = new RegExp( "^ *(modelend).*$", 'i' );
 		this.clumpbeginRegex = new RegExp( "^ *(clumpbegin).*$", 'i' );
 		this.clumpendRegex = new RegExp( "^ *(clumpend).*$", 'i' );
+		this.transformbeginRegex = new RegExp( "^ *(transformbegin).*$", 'i' );
+		this.transformendRegex = new RegExp( "^ *(transformend).*$", 'i' );  
 		this.protobeginRegex = new RegExp( "^ *(protobegin) +([A-Za-z0-9_\\-]+).*$", 'i' );
 		this.protoinstanceRegex = new RegExp( "^ *(protoinstance) +([A-Za-z0-9_\\-]+).*$", 'i' );
 		this.protoendRegex = new RegExp( "^ *(protoend).*$", 'i' );
@@ -850,14 +1025,18 @@ var RWXLoader = ( function () {
 
 			const defaultSurface = [ 0.0, 0.0, 0.0 ];
 
-      var groupStack = [];
-      var currentGroup = null;
+			var groupStack = [];
+			var currentGroup = null;
 
-      var currentGeometry = null;
+			var transformStack = [];
+
+      var currentTransform = new Matrix4();
+			var currentGeometry = null;
 
 			var rwxClumpStack = [];
 			var rwxProtoDict = {};
-			var currentScope = null;
+
+			var currentRWXMaterial = new RWXMaterial();
 
 			const lines = str.split( /[\n\r]+/g );
 
@@ -879,12 +1058,12 @@ var RWXLoader = ( function () {
 				res = this.modelbeginRegex.exec( line );
 				if ( res != null ) {
 
-					groupStack.push(new Group());
+					groupStack.push( new Group() );
 					currentGroup = groupStack.slice( - 1 )[ 0 ];
 
-					rwxClumpStack.push( new RWXObject() );
-					currentScope = rwxClumpStack.slice( - 1 )[ 0 ]; 
-					currentScope.state.surface = defaultSurface;
+					transformStack.push( currentTransform );
+					currentTransform = new Matrix4();
+
 					continue;
 
 				}
@@ -893,31 +1072,61 @@ var RWXLoader = ( function () {
 				if ( res != null ) {
 
 					var group = new Group();
-					currentGroup.add( group );
+          currentGroup.add( group );
 					groupStack.push( group );
-					currentGroup = groupStack.slice( - 1 )[ 0 ];
+					currentGroup = group;
 					currentGeometry = new Geometry();
 
-					var rwxClump = new RWXClump( currentScope.state );
-					rwxClumpStack.slice( - 1 )[ 0 ].clumps.push( rwxClump );
-					rwxClumpStack.push( rwxClump );
-					currentScope = rwxClump;
+					transformStack.push( currentTransform );
+					currentTransform = new Matrix4();
+
 					continue;
 
 				}
 
 				res = this.clumpendRegex.exec( line );
 				if ( res != null ) {
-       
-					currentGroup.add( new Mesh( currentGeometry ) );
-					groupStack.pop();
-					currentGroup = groupStack.slice( - 1 )[ 0 ];
 
-					currentGeometry = null;
+					const material = new MeshPhongMaterial( { color : 0xffffff, specular : 0xffffff, emissiveIntensity : 1 } );
+ 					var mesh = new Mesh( currentGeometry, material );
 
-					rwxClumpStack.pop();
-					currentScope = rwxClumpStack.slice( - 1 )[ 0 ];
+					mesh.applyMatrix4( getFinalTransform(transformStack) );
+					currentGroup.add( mesh );
+					currentGroup = groupStack.pop();
+					currentTransform = transformStack.pop();
+
+					currentGeometry = new Geometry();
+
 					continue;
+
+				}
+
+				res = this.transformbeginRegex.exec( line );
+				if ( res != null ) {
+
+					console.log("PUSH " + currentTransform.elements);
+
+          var group = new Group();
+          currentGroup.add( group );
+					groupStack.push( group );
+					currentGroup = group;
+
+					transformStack.push( currentTransform );
+					currentTransform = new Matrix4();
+
+					continue;
+
+				}
+
+				res = this.transformendRegex.exec( line );
+				if ( res != null ) {
+
+          console.log("POP " + currentTransform.elements);
+
+          currentGroup = groupStack.pop();
+          currentTransform = transformStack.pop();
+
+          continue;
 
 				}
 
@@ -925,8 +1134,11 @@ var RWXLoader = ( function () {
 				if ( res != null ) {
 
 					var name = res[ 2 ];
-					rwxProtoDict[ name ] = new RWXScope( currentScope.state );
-					currentScope = rwxProtoDict[ name ];
+					rwxProtoDict[ name ] = new Group();
+					currentTransform = new Matrix4();
+					currentGeometry = new Geometry();
+					currentMaterial = new RWXMaterial();
+					currentGroup = rwxProtoDict[ name ];
 					continue;
 
 				}
@@ -934,7 +1146,15 @@ var RWXLoader = ( function () {
 				res = this.protoendRegex.exec( line );
 				if ( res != null ) {
 
-					currentScope = rwxClumpStack[ 0 ];
+					const material = new MeshPhongMaterial( { color : 0xffffff, specular : 0xffffff, emissiveIntensity : 1 } );
+ 					var mesh = new Mesh( currentGeometry, material );
+
+					mesh.applyMatrix4( currentTransform );
+					currentGroup.add( mesh );
+					currentGroup = groupStack.slice( -1 )[ 0 ];
+					currentTransform = transformStack.slice( -1 )[ 0 ];
+
+					currentGeometry = new Geometry();
 					continue;
 
 				}
@@ -943,7 +1163,7 @@ var RWXLoader = ( function () {
 				if ( res != null ) {
 
 					name = res[ 2 ];
-					currentScope.applyProto( rwxProtoDict[ name ] );
+					currentGroup.add( rwxProtoDict[ name ] );
 					continue;
 
 				}
@@ -953,21 +1173,21 @@ var RWXLoader = ( function () {
 
 					if ( res[ 2 ].toLowerCase() == "null" ) {
 
-						currentScope.state.texture = null;
+						currentRWXMaterial.texture = null;
 
 					} else {
 
-						currentScope.state.texture = res[ 2 ];
+						currentRWXMaterial.texture = res[ 2 ];
 
 					}
 
 					if ( res[ 4 ] !== undefined ) {
 
-						currentScope.state.mask = res[ 4 ];
+						currentRWXMaterial.mask = res[ 4 ];
 
 					} else {
 
-						currentScope.state.mask = null;
+						currentRWXMaterial.mask = null;
 
 					}
 
@@ -984,7 +1204,6 @@ var RWXLoader = ( function () {
 						vId.push( parseInt( entry ) - 1 );
 
 					} );
-					currentScope.shapes.push( new RWXTriangle( vId[ 0 ], vId[ 1 ], vId[ 2 ], currentScope.state ) );
 
 					currentGeometry.faces.push( new Face3( vId[ 0 ], vId[ 1 ], vId[ 2 ] ) );
 					continue;
@@ -1000,7 +1219,6 @@ var RWXLoader = ( function () {
 						vId.push( parseInt( entry ) - 1 );
 
 					} );
-					currentScope.shapes.push( new RWXQuad( vId[ 0 ], vId[ 1 ], vId[ 2 ], vId[ 3 ], currentScope.state ) );
 
 					currentGeometry.faces.push( new Face3( vId[ 0 ], vId[ 1 ], vId[ 2 ] ) );
 					currentGeometry.faces.push( new Face3( vId[ 0 ], vId[ 2 ], vId[ 3 ] ) );
@@ -1018,7 +1236,8 @@ var RWXLoader = ( function () {
 						vId.unshift( parseInt( id ) - 1 );
 
 					} );
-					currentScope.shapes.push( new RWXPolygon( vId.slice( 0, vLen ), currentScope.state ) );
+
+          /* TODO: make polygon */
 					continue;
 
 				}
@@ -1044,12 +1263,7 @@ var RWXLoader = ( function () {
 
 						} );
 
-						currentScope.vertices.push( new RWXVertex( vprops[ 0 ], vprops[ 1 ], vprops[ 2 ],
-							moreVprops[ 0 ], 1.0 - moreVprops[ 1 ] ) );
-
-					} else {
-
-						currentScope.vertices.push( new RWXVertex( vprops[ 0 ], vprops[ 1 ], vprops[ 2 ] ) );
+						/* TODO: add UV */
 
 					}
 
@@ -1069,7 +1283,7 @@ var RWXLoader = ( function () {
 
 					if ( cprops.length == 3 ) {
 
-						currentScope.state.color = cprops;
+						currentRWXMaterial.color = cprops;
 
 					}
 
@@ -1080,7 +1294,7 @@ var RWXLoader = ( function () {
 				res = this.opacityRegex.exec( line );
 				if ( res != null ) {
 
-					currentScope.state.opacity = parseFloat( res[ 2 ] );
+					currentRWXMaterial.opacity = parseFloat( res[ 2 ] );
 					continue;
 
 				}
@@ -1097,10 +1311,7 @@ var RWXLoader = ( function () {
 
 					if ( tprops.length == 16 ) {
 
-						currentGroup.matrix.fromArray( tprops );
-
-						currentScope.state.transform = new Matrix4();
-						currentScope.state.transform.fromArray( tprops );
+						currentTransform.fromArray( tprops );
 
 					}
 
@@ -1124,25 +1335,19 @@ var RWXLoader = ( function () {
 
 						if ( rprops[ 0 ] ) {
 
-							currentScope.state.transform =
-								rotateM.makeRotationX( MathUtils.degToRad( - rprops[ 3 ] ) ).multiply( currentScope.state
-									.transform );
+							currentTransform.premultiply( ( new Matrix4() ).makeRotationX( MathUtils.degToRad( - rprops[ 3 ] ) ) );
 
 						}
 
 						if ( rprops[ 1 ] ) {
 
-							currentScope.state.transform =
-								rotateM.makeRotationY( MathUtils.degToRad( - rprops[ 3 ] ) ).multiply( currentScope.state
-									.transform );
+							currentTransform.premultiply( ( new Matrix4() ).makeRotationY( MathUtils.degToRad( - rprops[ 3 ] ) ) );
 
 						}
 
 						if ( rprops[ 2 ] ) {
 
-							currentScope.state.transform =
-								rotateM.makeRotationZ( MathUtils.degToRad( - rprops[ 3 ] ) ).multiply( currentScope.state
-									.transform );
+							currentTransform.premultiply( ( new Matrix4() ).makeRotationZ( MathUtils.degToRad( - rprops[ 3 ] ) ) );
 
 						}
 
@@ -1164,10 +1369,7 @@ var RWXLoader = ( function () {
 
 					if ( sprops.length == 3 ) {
 
-						var scaleM = new Matrix4();
-
-						currentScope.state.transform =
-							scaleM.makeScale( sprops[ 0 ], sprops[ 1 ], sprops[ 2 ] ).multiply( currentScope.state.transform );
+						currentTransform.premultiply( ( new Matrix4() ).makeScale( sprops[ 0 ], sprops[ 1 ], sprops[ 2 ] ) );
 
 					}
 
@@ -1185,7 +1387,7 @@ var RWXLoader = ( function () {
 
 					} );
 
-					currentScope.state.surface = sprops;
+					currentRWXMaterial.surface = sprops;
 					continue;
 
 				}
@@ -1193,7 +1395,7 @@ var RWXLoader = ( function () {
 				res = this.ambientRegex.exec( line );
 				if ( res != null ) {
 
-					currentScope.state.surface[ 0 ] = parseFloat( res[ 2 ] );
+					currentRWXMaterial.surface[ 0 ] = parseFloat( res[ 2 ] );
 					continue;
 
 				}
@@ -1201,7 +1403,7 @@ var RWXLoader = ( function () {
 				res = this.diffuseRegex.exec( line );
 				if ( res != null ) {
 
-					currentScope.state.surface[ 1 ] = parseFloat( res[ 2 ] );
+					currentRWXMaterial.surface[ 1 ] = parseFloat( res[ 2 ] );
 					continue;
 
 				}
@@ -1209,7 +1411,7 @@ var RWXLoader = ( function () {
 				res = this.specularRegex.exec( line );
 				if ( res != null ) {
 
-					currentScope.state.surface[ 2 ] = parseFloat( res[ 2 ] );
+					currentRWXMaterial.surface[ 2 ] = parseFloat( res[ 2 ] );
 					continue;
 
 				}
@@ -1221,15 +1423,15 @@ var RWXLoader = ( function () {
 
 					if ( matMode == "none" ) {
 
-						currentScope.state.materialmode = MaterialMode.NONE;
+						currentRWXMaterial.materialmode = MaterialMode.NONE;
 
 					} else if ( matMode == "null" ) {
 
-						currentScope.state.materialmode = MaterialMode.NULL;
+						currentRWXMaterial.materialmode = MaterialMode.NULL;
 
 					} else if ( matMode == "double" ) {
 
-						currentScope.state.materialmode = MaterialMode.DOUBLE;
+						currentRWXMaterial.materialmode = MaterialMode.DOUBLE;
 
 					}
 
@@ -1244,11 +1446,11 @@ var RWXLoader = ( function () {
 
 					if ( collision == "on" ) {
 
-						currentScope.state.collision = true;
+						currentRWXMaterial.collision = true;
 
 					} else if ( collision == "off" ) {
 
-						currentScope.state.collision = false;
+						currentRWXMaterial.collision = false;
 
 					}
 
@@ -1257,7 +1459,7 @@ var RWXLoader = ( function () {
 				}
 
 			}
-
+/*
 			var geometry = new Geometry();
 
 			var [ vertices, uvs ] = gatherVerticesRecursive( rwxClumpStack[ 0 ].clumps[ 0 ] );
@@ -1308,9 +1510,14 @@ var RWXLoader = ( function () {
 			geometry.uvsNeedUpdate = true;
 			geometry.computeVertexNormals();
 
-			const object = new Mesh( geometry, materialsList );
+			const object = new Mesh( geometry, materialsList ); */
 
-			return object;
+			//groupStack[ 0 ].matrixAutoUpdate = false;
+			  //groupStack[ 0 ].matrix.makeRotationX( 3.1415 / 4.0 );
+
+			printGroups( groupStack[ 0 ] );
+
+			return groupStack[ 0 ];
 
 		}
 
