@@ -72,7 +72,7 @@ var RWXLoader = ( function () {
 
 		var _basis = new Matrix4();
 
-		return function ( vertices, uvs, loops, loopMatIds = [] ) {
+		return function ( vertices, uvs, loop ) {
 
 			var newVertices = [];
 			var newUvs = [];
@@ -80,83 +80,74 @@ var RWXLoader = ( function () {
 
 			var offset = vertices.length;
 
-			for ( var lid = 0, llen = loops.length; lid < llen; lid ++ ) {
+			// compute centroid
+			_ctr.setScalar( 0.0 );
 
-				var loop = loops[ lid ];
+			var l = loop.length;
+			for ( var i = 0; i < l; i ++ ) {
 
-				// compute centroid
-				_ctr.setScalar( 0.0 );
+				_ctr.add( vertices[ loop[ i ] ] );
 
-				var l = loop.length;
-				for ( var i = 0; i < l; i ++ ) {
+			}
 
-					_ctr.add( vertices[ loop[ i ] ] );
+			_ctr.multiplyScalar( 1.0 / l );
 
-				}
+			var loopNormal = new Vector3( 0.0, 0.0, 0.0 );
 
-				_ctr.multiplyScalar( 1.0 / l );
+			// compute loop normal using Newell's Method
+			for ( var i = 0, len = loop.length; i < len; i ++ ) {
 
-				var loopNormal = new Vector3( 0.0, 0.0, 0.0 );
+				var currentVertex = vertices[ loop[ i ] ];
+				var nextVertex = vertices[ loop[ ( i + 1 ) % len ] ];
 
-				// compute loop normal using Newell's Method
-				for ( var i = 0, len = loop.length; i < len; i ++ ) {
+				loopNormal.x += ( currentVertex.y - nextVertex.y ) * ( currentVertex.z + nextVertex.z );
+				loopNormal.y += ( currentVertex.z - nextVertex.z ) * ( currentVertex.x + nextVertex.x );
+				loopNormal.z += ( currentVertex.x - nextVertex.x ) * ( currentVertex.y + nextVertex.y );
 
-					var currentVertex = vertices[ loop[ i ] ];
-					var nextVertex = vertices[ loop[ ( i + 1 ) % len ] ];
+			}
 
-					loopNormal.x += ( currentVertex.y - nextVertex.y ) * ( currentVertex.z + nextVertex.z );
-					loopNormal.y += ( currentVertex.z - nextVertex.z ) * ( currentVertex.x + nextVertex.x );
-					loopNormal.z += ( currentVertex.x - nextVertex.x ) * ( currentVertex.y + nextVertex.y );
+			loopNormal.normalize();
 
-				}
+			_plane.setFromNormalAndCoplanarPoint( loopNormal, vertices[ loop[ 0 ] ] );
+			var _z = _plane.normal;
 
-				loopNormal.normalize();
+			// compute basis
+			_q.setFromUnitVectors( Z, _z );
+			_x.copy( X ).applyQuaternion( _q );
+			_y.crossVectors( _x, _z );
+			_y.normalize();
+			_basis.makeBasis( _x, _y, _z );
+			_basis.setPosition( _ctr );
 
-				_plane.setFromNormalAndCoplanarPoint( loopNormal, vertices[ loop[ 0 ] ] );
-				var _z = _plane.normal;
+			// project the 3D vertices on the 2D plane
+			var projVertices = [];
+			for ( var i = 0; i < l; i ++ ) {
 
-				// compute basis
-				_q.setFromUnitVectors( Z, _z );
-				_x.copy( X ).applyQuaternion( _q );
-				_y.crossVectors( _x, _z );
-				_y.normalize();
-				_basis.makeBasis( _x, _y, _z );
-				_basis.setPosition( _ctr );
+				_tmp.subVectors( vertices[ loop[ i ] ], _ctr );
+				projVertices.push( new Vector2( _tmp.dot( _x ), _tmp.dot( _y ) ) );
+				newUvs.push( uvs[ loop[ i ] ] ) ;
 
-				// project the 3D vertices on the 2D plane
-				var projVertices = [];
-				for ( var i = 0; i < l; i ++ ) {
+			}
 
-					_tmp.subVectors( vertices[ loop[ i ] ], _ctr );
-					projVertices.push( new Vector2( _tmp.dot( _x ), _tmp.dot( _y ) ) );
-					newUvs.push( [ uvs[ loop[ i ] ][ 0 ], uvs[ loop[ i ] ][ 1 ] ] );
+			// create the geometry (Three.js triangulation with ShapeBufferGeometry)
+			var shape = new Shape( projVertices );
+			var geometry = new ShapeGeometry( shape );
 
-				}
+			// transform geometry back to the initial coordinate system
+			geometry.applyMatrix4( _basis );
 
-				// create the geometry (Three.js triangulation with ShapeBufferGeometry)
-				var shape = new Shape( projVertices );
-				var geometry = new ShapeGeometry( shape );
+			for ( var i = 0, lVertices = geometry.vertices.length; i < lVertices; i ++ ) {
 
-				// transform geometry back to the initial coordinate system
-				geometry.applyMatrix4( _basis );
+				newVertices.push( geometry.vertices[ i ] );
 
-				for ( var i = 0, lVertices = geometry.vertices.length; i < lVertices; i ++ ) {
+			}
 
-					newVertices.push( geometry.vertices[ i ] );
+			for ( var i = 0, lFaces = geometry.faces.length; i < lFaces; i ++ ) {
 
-				}
-
-				for ( var i = 0, lFaces = geometry.faces.length; i < lFaces; i ++ ) {
-
-					var face = new Face3( geometry.faces[ i ].a + offset,
-						geometry.faces[ i ].b + offset,
-						geometry.faces[ i ].c + offset );
-					face.materialIndex = loopMatIds[ lid ];
-					faces.push( face );
-
-				}
-
-				offset += geometry.vertices.length;
+				var face = new Face3( geometry.faces[ i ].a + offset,
+					geometry.faces[ i ].b + offset,
+					geometry.faces[ i ].c + offset );
+				faces.push( face );
 
 			}
 
@@ -1151,14 +1142,13 @@ var RWXLoader = ( function () {
 				res = this.clumpendRegex.exec( line );
 				if ( res != null ) {
 
-					  var material = makeThreeMaterial( currentRWXMaterial, textureFolderPath, this.texExtension, this.maskExtension, this.jsZip, this.jsZipUtils );
-            material.needsUpdate = true;
-					  //const material = new MeshNormalMaterial();
-            currentGeometry.uvsNeedUpdate = true;
-			currentGeometry.computeVertexNormals();
+ 					const clumpRWXMaterial = Object.assign( new RWXMaterial(), currentRWXMaterial );
+ 					var material = makeThreeMaterial( clumpRWXMaterial, textureFolderPath, this.texExtension, this.maskExtension, this.jsZip, this.jsZipUtils );
+ 					material.needsUpdate = true;
+ 					currentGeometry.uvsNeedUpdate = true;
+ 					currentGeometry.computeVertexNormals();
  					var mesh = new Mesh( currentGeometry, material );
 
-					mesh.applyMatrix4( getFinalTransform(transformStack) );
 					currentGroup.add( mesh );
 					currentGroup = groupStack.pop();
 					currentTransform = transformStack.pop();
@@ -1210,7 +1200,7 @@ var RWXLoader = ( function () {
 					currentGeometry.faceVertexUvs[ 0 ] = [];
 					currentUVs = [];
 
-					currentMaterial = new RWXMaterial();
+					currentRWXMaterial = new RWXMaterial();
 					currentGroup = rwxProtoDict[ name ];
 					continue;
 
@@ -1219,7 +1209,11 @@ var RWXLoader = ( function () {
 				res = this.protoendRegex.exec( line );
 				if ( res != null ) {
 
-					const material = new MeshPhongMaterial( { color : 0xffffff, specular : 0xffffff, emissiveIntensity : 1 } );
+					const protoRWXMaterial = Object.assign( new RWXMaterial(), currentRWXMaterial );
+					var material = makeThreeMaterial( protoRWXMaterial, textureFolderPath, this.texExtension, this.maskExtension, this.jsZip, this.jsZipUtils );
+ 					material.needsUpdate = true;
+ 					currentGeometry.uvsNeedUpdate = true;
+ 					currentGeometry.computeVertexNormals();
  					var mesh = new Mesh( currentGeometry, material );
 
 					mesh.applyMatrix4( currentTransform );
@@ -1239,7 +1233,11 @@ var RWXLoader = ( function () {
 				if ( res != null ) {
 
 					name = res[ 2 ];
-					currentGroup.add( rwxProtoDict[ name ] );
+					  var protoMesh = rwxProtoDict[ name ].clone();
+            var tmpTransform = getFinalTransform( transformStack );
+            tmpTransform.multiply( currentTransform );
+            protoMesh.applyMatrix4( tmpTransform );
+					currentGroup.add( protoMesh );
 					continue;
 
 				}
@@ -1324,7 +1322,25 @@ var RWXLoader = ( function () {
 
 					} );
 
-          /* TODO: make polygon */
+					const [ newVertices, newUVs, newFaces ] = triangulateFacesWithShapes( currentGeometry.vertices, currentUVs, vId );
+
+					currentGeometry.vertices.push( ...newVertices );
+					currentGeometry.faces.push( ...newFaces );
+
+					for ( var lf = 0; lf < newFaces.length; lf ++ ) {
+
+						const vid1 = newFaces[ lf ].a;
+						const vid2 = newFaces[ lf ].b;
+						const vid3 = newFaces[ lf ].c;
+
+						currentGeometry.faceVertexUvs[ 0 ].push( [
+							new Vector2( newUVs[ vid1 ] ),
+							new Vector2( newUVs[ vid2 ] ),
+							new Vector2( newUVs[ vid3 ] )
+						] );
+
+					}
+
 					continue;
 
 				}
@@ -1339,7 +1355,9 @@ var RWXLoader = ( function () {
 
 					} );
 
-					currentGeometry.vertices.push( new Vector3( vprops[ 0 ], vprops[ 1 ], vprops[ 2 ] ) );
+					var tmpVertex = new Vector4( vprops[ 0 ], vprops[ 1 ], vprops[ 2 ] );
+					tmpVertex.applyMatrix4( getFinalTransform ( transformStack ) );
+					currentGeometry.vertices.push( new Vector3( tmpVertex.x, tmpVertex.y, tmpVertex.z ) );
 
 					if ( typeof ( res[ 7 ] ) != "undefined" ) {
 
@@ -1350,13 +1368,13 @@ var RWXLoader = ( function () {
 
 						} );
 
-						currentUVs.push( new Vector2( moreVprops[ 0 ], moreVprops[ 1 ] ) );
+						currentUVs.push( new Vector2( moreVprops[ 0 ], 1 - moreVprops[ 1 ] ) );
 
 					}
 					else
 					{
 
-						currentUVs.faceVertexUvs[ 0 ].push( new Vector2( 0.0, 0.0 ) );
+						currentUVs.push( new Vector2( 0.0, 0.0 ) );
 
 					}
 
@@ -1428,19 +1446,22 @@ var RWXLoader = ( function () {
 
 						if ( rprops[ 0 ] ) {
 
-							currentTransform.premultiply( ( new Matrix4() ).makeRotationX( MathUtils.degToRad( - rprops[ 3 ] ) ) );
+							rotateM.makeRotationX( MathUtils.degToRad( -rprops[ 3 ] ) );
+							currentTransform.premultiply( rotateM );
 
 						}
 
 						if ( rprops[ 1 ] ) {
 
-							currentTransform.premultiply( ( new Matrix4() ).makeRotationY( MathUtils.degToRad( - rprops[ 3 ] ) ) );
+							rotateM.makeRotationY( MathUtils.degToRad( -rprops[ 3 ] ) );
+							currentTransform.premultiply( rotateM );
 
 						}
 
 						if ( rprops[ 2 ] ) {
 
-							currentTransform.premultiply( ( new Matrix4() ).makeRotationZ( MathUtils.degToRad( - rprops[ 3 ] ) ) );
+							rotateM.makeRotationZ( MathUtils.degToRad( -rprops[ 3 ] ) );
+							currentTransform.premultiply( rotateM );
 
 						}
 
@@ -1460,9 +1481,14 @@ var RWXLoader = ( function () {
 
 					} );
 
+					var scaleM = new Matrix4();
+
 					if ( sprops.length == 3 ) {
 
-						currentTransform.premultiply( ( new Matrix4() ).makeScale( sprops[ 0 ], sprops[ 1 ], sprops[ 2 ] ) );
+            scaleM.makeScale( sprops[ 0 ], sprops[ 1 ], sprops[ 2 ] )
+						  currentTransform.premultiply( scaleM );
+
+              console.log("SCALE " + currentTransform.elements);
 
 					}
 
