@@ -72,7 +72,7 @@ var RWXLoader = ( function () {
 
 		var _basis = new Matrix4();
 
-		return function ( vertices, uvs, loop ) {
+		return function ( vertices, uvs, loop, materialID ) {
 
 			var newVertices = [];
 			var newUvs = [];
@@ -144,9 +144,13 @@ var RWXLoader = ( function () {
 
 			for ( var i = 0, lFaces = geometry.faces.length; i < lFaces; i ++ ) {
 
-				var face = new Face3( geometry.faces[ i ].a + offset,
+				var face = new Face3(
+					geometry.faces[ i ].a + offset,
 					geometry.faces[ i ].b + offset,
-					geometry.faces[ i ].c + offset );
+					geometry.faces[ i ].c + offset
+        );
+
+				face.materialIndex = materialID;
 				faces.push( face );
 
 			}
@@ -261,7 +265,7 @@ var RWXLoader = ( function () {
 
 		}
 
-		RWXState.prototype = {
+		RWXMaterial.prototype = {
 
 			constructor: RWXMaterial,
 
@@ -415,10 +419,20 @@ var RWXLoader = ( function () {
 
 	var RWXMaterialManager = ( function () {
 
-		function RWXMaterialManager() {
+		function RWXMaterialManager( folder, texExtension = "jpg", maskExtension =
+			"zip", jsZip = null, jsZipUtils = null ) {
+
+			this.folder = folder;
+			this.texExtension = texExtension;
+			this.maskExtension = maskExtension;
+			this.jsZip = jsZip;
+			this.jsZipUtils = jsZipUtils;
 
 			this.currentRWXMaterial = new RWXMaterial();
-			this.threeMaterialMap = {}
+			this.threeMaterialMap = {};
+			this.currentMaterialID = null;
+			this.currentMaterialList = [];
+			this.currentMaterialSignature = "";
 
 		}
 
@@ -426,19 +440,55 @@ var RWXLoader = ( function () {
 
 			constructor: RWXMaterialManager,
 
-			getCurrentThreeMaterial: function ( folder, texExtension = "jpg", maskExtension =
-			"zip", jsZip = null, jsZipUtils = null ) {
+			getCurrentMaterialID: function () {
+
+				const materialSignature = this.currentRWXMaterial.getMatSignature();
 
 				/* This gets called when the material is actually required by (at least) one face,
 				* meaning we need to save the material in the map if it's not already done */
-				if ( this.threeMaterialMap[ this.currentRWXMaterial.getMatSignature() ] === undefined ) {
+				if ( this.threeMaterialMap[ materialSignature ] === undefined ) {
 
-					this.threeMaterialMap[ this.currentRWXMaterial.getMatSignature() ] = makeThreeMaterial( this.currentRWXMaterial,
-          folder, texExtension, maskExtension, jsZip, jsZipUtils );
+					this.threeMaterialMap[ materialSignature ] = makeThreeMaterial( Object.assign(new RWXMaterial(), this.currentRWXMaterial),
+						this.folder, this.texExtension, this.maskExtension, this.jsZip, this.jsZipUtils );
+					this.threeMaterialMap[ materialSignature ].needsUpdate = true;
 
 				}
 
-				return this.threeMaterialMap[ this.currentRWXMaterial.getMatSignature() ];
+				if ( this.currentMaterialSignature != materialSignature) {
+
+					this.currentMaterialSignature = materialSignature;
+
+					// We're onto a new material given the current list, we need to add it to the list and increment the ID
+
+					if ( this.currentMaterialID === null ) {
+
+						this.currentMaterialID = 0;
+
+					} else {
+
+						this.currentMaterialID++;
+ 
+					}
+
+					this.currentMaterialList.push( this.threeMaterialMap[ materialSignature ] );
+
+				}
+
+				return this.currentMaterialID;
+
+			},
+
+			getCurrentMaterialList: function () {
+
+				return this.currentMaterialList;
+
+			},
+
+			resetCurrentMaterialList: function () {
+
+				this.currentMaterialID = null;
+				this.currentMaterialList = [];
+				this.currentMaterialSignature = "";
 
 			}
 
@@ -1089,7 +1139,7 @@ var RWXLoader = ( function () {
 			var rwxClumpStack = [];
 			var rwxProtoDict = {};
 
-			var currentRWXMaterial = new RWXMaterial();
+		  var materialManager = new RWXMaterialManager( textureFolderPath, this.texExtension, this.maskExtension, this.jsZip, this.jsZipUtils );
 
 			const lines = str.split( /[\n\r]+/g );
 
@@ -1142,12 +1192,9 @@ var RWXLoader = ( function () {
 				res = this.clumpendRegex.exec( line );
 				if ( res != null ) {
 
- 					const clumpRWXMaterial = Object.assign( new RWXMaterial(), currentRWXMaterial );
- 					var material = makeThreeMaterial( clumpRWXMaterial, textureFolderPath, this.texExtension, this.maskExtension, this.jsZip, this.jsZipUtils );
- 					material.needsUpdate = true;
- 					currentGeometry.uvsNeedUpdate = true;
- 					currentGeometry.computeVertexNormals();
- 					var mesh = new Mesh( currentGeometry, material );
+					currentGeometry.uvsNeedUpdate = true;
+					currentGeometry.computeVertexNormals();
+					var mesh = new Mesh( currentGeometry, materialManager.getCurrentMaterialList() );
 
 					currentGroup.add( mesh );
 					currentGroup = groupStack.pop();
@@ -1157,14 +1204,13 @@ var RWXLoader = ( function () {
 					currentGeometry.faceVertexUvs[ 0 ] = [];
 					currentUVs = [];
 
+					materialManager.resetCurrentMaterialList();
 					continue;
 
 				}
 
 				res = this.transformbeginRegex.exec( line );
 				if ( res != null ) {
-
-					console.log("PUSH " + currentTransform.elements);
 
           var group = new Group();
           currentGroup.add( group );
@@ -1180,8 +1226,6 @@ var RWXLoader = ( function () {
 
 				res = this.transformendRegex.exec( line );
 				if ( res != null ) {
-
-          console.log("POP " + currentTransform.elements);
 
           currentGroup = groupStack.pop();
           currentTransform = transformStack.pop();
@@ -1200,7 +1244,7 @@ var RWXLoader = ( function () {
 					currentGeometry.faceVertexUvs[ 0 ] = [];
 					currentUVs = [];
 
-					currentRWXMaterial = new RWXMaterial();
+					materialManager.currentRWXMaterial = new RWXMaterial();
 					currentGroup = rwxProtoDict[ name ];
 					continue;
 
@@ -1209,12 +1253,9 @@ var RWXLoader = ( function () {
 				res = this.protoendRegex.exec( line );
 				if ( res != null ) {
 
-					const protoRWXMaterial = Object.assign( new RWXMaterial(), currentRWXMaterial );
-					var material = makeThreeMaterial( protoRWXMaterial, textureFolderPath, this.texExtension, this.maskExtension, this.jsZip, this.jsZipUtils );
- 					material.needsUpdate = true;
  					currentGeometry.uvsNeedUpdate = true;
  					currentGeometry.computeVertexNormals();
- 					var mesh = new Mesh( currentGeometry, material );
+ 					var mesh = new Mesh( currentGeometry, materialManager.getCurrentMaterialList() );
 
 					mesh.applyMatrix4( currentTransform );
 					currentGroup.add( mesh );
@@ -1225,6 +1266,8 @@ var RWXLoader = ( function () {
 					currentGeometry.faceVertexUvs[ 0 ] = [];
 					currentUVs = [];
 
+					materialManager.resetCurrentMaterialList()
+            
 					continue;
 
 				}
@@ -1247,21 +1290,21 @@ var RWXLoader = ( function () {
 
 					if ( res[ 2 ].toLowerCase() == "null" ) {
 
-						currentRWXMaterial.texture = null;
+						materialManager.currentRWXMaterial.texture = null;
 
 					} else {
 
-						currentRWXMaterial.texture = res[ 2 ];
+						materialManager.currentRWXMaterial.texture = res[ 2 ];
 
 					}
 
 					if ( res[ 4 ] !== undefined ) {
 
-						currentRWXMaterial.mask = res[ 4 ];
+						materialManager.currentRWXMaterial.mask = res[ 4 ];
 
 					} else {
 
-						currentRWXMaterial.mask = null;
+						materialManager.currentRWXMaterial.mask = null;
 
 					}
 
@@ -1279,7 +1322,9 @@ var RWXLoader = ( function () {
 
 					} );
 
-					currentGeometry.faces.push( new Face3( vId[ 0 ], vId[ 1 ], vId[ 2 ] ) );
+					var face = new Face3( vId[ 0 ], vId[ 1 ], vId[ 2 ] );
+					face.materialIndex = materialManager.getCurrentMaterialID();
+					currentGeometry.faces.push( face );
           currentGeometry.faceVertexUvs[ 0 ].push( [
 						currentUVs[ vId[ 0 ] ], currentUVs[ vId[ 1 ] ], currentUVs[ vId[ 2 ] ]
 					] );
@@ -1298,8 +1343,13 @@ var RWXLoader = ( function () {
 
 					} );
 
-					currentGeometry.faces.push( new Face3( vId[ 0 ], vId[ 1 ], vId[ 2 ] ) );
-					currentGeometry.faces.push( new Face3( vId[ 0 ], vId[ 2 ], vId[ 3 ] ) );
+					var face = new Face3( vId[ 0 ], vId[ 1 ], vId[ 2 ] );
+					face.materialIndex = materialManager.getCurrentMaterialID();
+					currentGeometry.faces.push( face );
+					face = new Face3( vId[ 0 ], vId[ 2 ], vId[ 3 ] );
+					face.materialIndex = materialManager.getCurrentMaterialID();
+					currentGeometry.faces.push( face );
+
  					currentGeometry.faceVertexUvs[ 0 ].push( [
 						currentUVs[ vId[ 0 ] ], currentUVs[ vId[ 1 ] ], currentUVs[ vId[ 2 ] ]
 					] );
@@ -1322,8 +1372,10 @@ var RWXLoader = ( function () {
 
 					} );
 
-					const [ newVertices, newUVs, newFaces ] = triangulateFacesWithShapes( currentGeometry.vertices, currentUVs, vId );
+					const [ newVertices, newUVs, newFaces ] =
+					triangulateFacesWithShapes( currentGeometry.vertices, currentUVs, vId, materialManager.getCurrentMaterialID() );
 
+					const preInsertionLength = currentGeometry.vertices.length;
 					currentGeometry.vertices.push( ...newVertices );
 					currentGeometry.faces.push( ...newFaces );
 
@@ -1334,9 +1386,9 @@ var RWXLoader = ( function () {
 						const vid3 = newFaces[ lf ].c;
 
 						currentGeometry.faceVertexUvs[ 0 ].push( [
-							new Vector2( newUVs[ vid1 ] ),
-							new Vector2( newUVs[ vid2 ] ),
-							new Vector2( newUVs[ vid3 ] )
+							newUVs[ vid1 - preInsertionLength ],
+							newUVs[ vid2 - preInsertionLength ],
+							newUVs[ vid3 - preInsertionLength ]
 						] );
 
 					}
@@ -1394,7 +1446,7 @@ var RWXLoader = ( function () {
 
 					if ( cprops.length == 3 ) {
 
-						currentRWXMaterial.color = cprops;
+						materialManager.currentRWXMaterial.color = cprops;
 
 					}
 
@@ -1405,7 +1457,7 @@ var RWXLoader = ( function () {
 				res = this.opacityRegex.exec( line );
 				if ( res != null ) {
 
-					currentRWXMaterial.opacity = parseFloat( res[ 2 ] );
+					materialManager.currentRWXMaterial.opacity = parseFloat( res[ 2 ] );
 					continue;
 
 				}
@@ -1488,8 +1540,6 @@ var RWXLoader = ( function () {
             scaleM.makeScale( sprops[ 0 ], sprops[ 1 ], sprops[ 2 ] )
 						  currentTransform.premultiply( scaleM );
 
-              console.log("SCALE " + currentTransform.elements);
-
 					}
 
 					continue;
@@ -1506,7 +1556,7 @@ var RWXLoader = ( function () {
 
 					} );
 
-					currentRWXMaterial.surface = sprops;
+					materialManager.currentRWXMaterial.surface = sprops;
 					continue;
 
 				}
@@ -1514,7 +1564,7 @@ var RWXLoader = ( function () {
 				res = this.ambientRegex.exec( line );
 				if ( res != null ) {
 
-					currentRWXMaterial.surface[ 0 ] = parseFloat( res[ 2 ] );
+					materialManager.currentRWXMaterial.surface[ 0 ] = parseFloat( res[ 2 ] );
 					continue;
 
 				}
@@ -1522,7 +1572,7 @@ var RWXLoader = ( function () {
 				res = this.diffuseRegex.exec( line );
 				if ( res != null ) {
 
-					currentRWXMaterial.surface[ 1 ] = parseFloat( res[ 2 ] );
+					materialManager.currentRWXMaterial.surface[ 1 ] = parseFloat( res[ 2 ] );
 					continue;
 
 				}
@@ -1530,7 +1580,7 @@ var RWXLoader = ( function () {
 				res = this.specularRegex.exec( line );
 				if ( res != null ) {
 
-					currentRWXMaterial.surface[ 2 ] = parseFloat( res[ 2 ] );
+					materialManager.currentRWXMaterial.surface[ 2 ] = parseFloat( res[ 2 ] );
 					continue;
 
 				}
@@ -1542,15 +1592,15 @@ var RWXLoader = ( function () {
 
 					if ( matMode == "none" ) {
 
-						currentRWXMaterial.materialmode = MaterialMode.NONE;
+						materialManager.currentRWXMaterial.materialmode = MaterialMode.NONE;
 
 					} else if ( matMode == "null" ) {
 
-						currentRWXMaterial.materialmode = MaterialMode.NULL;
+						materialManager.currentRWXMaterial.materialmode = MaterialMode.NULL;
 
 					} else if ( matMode == "double" ) {
 
-						currentRWXMaterial.materialmode = MaterialMode.DOUBLE;
+						materialManager.currentRWXMaterial.materialmode = MaterialMode.DOUBLE;
 
 					}
 
@@ -1565,11 +1615,11 @@ var RWXLoader = ( function () {
 
 					if ( collision == "on" ) {
 
-						currentRWXMaterial.collision = true;
+						materialManager.currentRWXMaterial.collision = true;
 
 					} else if ( collision == "off" ) {
 
-						currentRWXMaterial.collision = false;
+						materialManager.currentRWXMaterial.collision = false;
 
 					}
 
@@ -1634,7 +1684,7 @@ var RWXLoader = ( function () {
 			//groupStack[ 0 ].matrixAutoUpdate = false;
 			  //groupStack[ 0 ].matrix.makeRotationX( 3.1415 / 4.0 );
 
-			printGroups( groupStack[ 0 ] );
+			// printGroups( groupStack[ 0 ] );
 
 			return groupStack[ 0 ];
 
