@@ -3,7 +3,6 @@
  */
 
 import {
-	BufferGeometry,
 	FileLoader,
 	Loader,
 	Mesh,
@@ -53,17 +52,17 @@ var RWXLoader = ( function () {
 		DOUBLE: 2
 	};
 
-	var getFinalTransform = function ( transformStack ) {
+	var getFinalTransform = function ( ctx ) {
 
 		var transform = new Matrix4();
 
-		transformStack.forEach( ( t ) => {
+		ctx.transformStack.forEach( ( t ) => {
 
 			transform.multiply( t );
 
 		} );
 
-		return transform;
+		return transform.multiply( ctx.currentTransform );
 
 	};
 
@@ -183,7 +182,7 @@ var RWXLoader = ( function () {
 
 			materialDict[ 'side' ] = DoubleSide;
 
-		} else if ( rwxMaterial.materialmode == MaterialMode.NULL ) {
+		} else if ( rwxMaterial.materialmode == MaterialMode.NONE ) {
 
 			materialDict[ 'visible' ] = false;
 
@@ -299,19 +298,18 @@ var RWXLoader = ( function () {
 
 	};
 
-	var makeMeshToCurrentGroup = function ( ctx, applyTransform = false ) {
+	var makeMeshToCurrentGroup = function ( ctx ) {
 
 		ctx.currentGeometry.uvsNeedUpdate = true;
 		ctx.currentGeometry.computeVertexNormals();
-		var mesh = new Mesh( ctx.currentGeometry, ctx.materialManager.getCurrentMaterialList() );
 
-		if ( applyTransform ) {
+		if ( ctx.currentGeometry.faces.length > 0 ) {
 
-			mesh.applyMatrix4( ctx.currentTransform );
+			var mesh = new Mesh( ctx.currentGeometry, ctx.materialManager.getCurrentMaterialList() );
+
+			ctx.currentGroup.add( mesh );
 
 		}
-
-		ctx.currentGroup.add( mesh );
 
 	};
 
@@ -328,7 +326,7 @@ var RWXLoader = ( function () {
 			this.texturemodes = [ TextureMode
 				.LIT,
 			]; // There's possibly more than one mode enabled at a time (hence why we use an array)
-			this.materialmode = MaterialMode.NONE; // Neither NULL nor DOUBLE: we only render one side of the polygon
+			this.materialmode = MaterialMode.NULL; // Neither NONE nor DOUBLE: we only render one side of the polygon
 			this.texture = null;
 			this.mask = null;
 			this.collision = true;
@@ -584,6 +582,9 @@ var RWXLoader = ( function () {
 				materialManager: new RWXMaterialManager( textureFolderPath, this.texExtension, this.maskExtension, this.jsZip, this.jsZipUtils )
 			};
 
+			var transformBeforeProto = null;
+			var groupBeforeProto = null;
+
 			const lines = str.split( /[\n\r]+/g );
 
 			for ( var i = 0, l = lines.length; i < l; i ++ ) {
@@ -608,7 +609,6 @@ var RWXLoader = ( function () {
 					ctx.currentGroup = ctx.groupStack.slice( - 1 )[ 0 ];
 
 					ctx.transformStack.push( ctx.currentTransform );
-					ctx.currentTransform = new Matrix4();
 
 					continue;
 
@@ -676,6 +676,10 @@ var RWXLoader = ( function () {
 				if ( res != null ) {
 
 					var name = res[ 2 ];
+
+					transformBeforeProto = ctx.currentGroup;
+					groupBeforeProto = ctx.currentTransform;
+
 					ctx.rwxProtoDict[ name ] = new Group();
 					ctx.currentTransform = new Matrix4();
 					ctx.currentGeometry = new Geometry();
@@ -684,6 +688,7 @@ var RWXLoader = ( function () {
 
 					ctx.materialManager.currentRWXMaterial = new RWXMaterial();
 					ctx.currentGroup = ctx.rwxProtoDict[ name ];
+
 					continue;
 
 				}
@@ -691,10 +696,10 @@ var RWXLoader = ( function () {
 				res = this.protoendRegex.exec( line );
 				if ( res != null ) {
 
-					makeMeshToCurrentGroup( ctx, true );
+					makeMeshToCurrentGroup( ctx );
 
-					ctx.currentGroup = ctx.groupStack.slice( - 1 )[ 0 ];
-					ctx.currentTransform = ctx.transformStack.slice( - 1 )[ 0 ];
+					ctx.currentGroup = transformBeforeProto;
+					ctx.currentTransform = groupBeforeProto;
 
 					ctx.currentGeometry = new Geometry();
 					ctx.currentGeometry.faceVertexUvs[ 0 ] = [];
@@ -711,10 +716,10 @@ var RWXLoader = ( function () {
 
 					name = res[ 2 ];
 					var protoMesh = ctx.rwxProtoDict[ name ].clone();
-					var tmpTransform = getFinalTransform( ctx.transformStack );
-					tmpTransform.multiply( ctx.currentTransform );
+					var tmpTransform = getFinalTransform( ctx );
 					protoMesh.applyMatrix4( tmpTransform );
 					ctx.currentGroup.add( protoMesh );
+
 					continue;
 
 				}
@@ -842,7 +847,7 @@ var RWXLoader = ( function () {
 					} );
 
 					var tmpVertex = new Vector4( vprops[ 0 ], vprops[ 1 ], vprops[ 2 ] );
-					tmpVertex.applyMatrix4( getFinalTransform( ctx.transformStack ) );
+					tmpVertex.applyMatrix4( getFinalTransform( ctx ) );
 					ctx.currentGeometry.vertices.push( new Vector3( tmpVertex.x, tmpVertex.y, tmpVertex.z ) );
 
 					if ( typeof ( res[ 7 ] ) != "undefined" ) {
