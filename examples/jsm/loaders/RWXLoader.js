@@ -1066,7 +1066,12 @@ var RWXLoader = ( function () {
 
 			}
 
-			// We're done, return to root group to get the whole object
+			// We're done, return the root group to get the whole object, we take the decadecimal unit into account
+			var scale_ten = new Matrix4();
+			scale_ten.makeScale( 10.0, 10.0, 10.0 );
+
+			ctx.groupStack[ 0 ].applyMatrix4( scale_ten );
+
 			return ctx.groupStack[ 0 ];
 
 		}
