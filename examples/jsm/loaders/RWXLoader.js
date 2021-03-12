@@ -25,34 +25,47 @@ import {
 	DoubleSide,
 	ImageBitmapLoader,
 	Texture,
-	  Group,
-    MeshNormalMaterial
+	Group,
 } from "../../../build/three.module.js";
 
-var printGroups = function (group, depth = 0)
-{
-	console.log( "  ".repeat( depth ) + group.matrix.elements );
-
-	group.children.forEach( (child) => {
-
-		printGroups( child, depth + 1 );
-
-	} );
-}
-
-var getFinalTransform = function (transformStack)
-{
-	var transform = new Matrix4();
-	transformStack.forEach( (t) => {
-
-		transform.multiply(t);
-
-	} );
-
-	return transform;
-}
-
 var RWXLoader = ( function () {
+
+	const LightSampling = {
+		FACET: 1,
+		VERTEX: 2
+	};
+
+	const GeometrySampling = {
+		POINTCOULD: 1,
+		WIREFRAME: 2,
+		SOLID: 3
+	};
+
+	const TextureMode = {
+		LIT: 1,
+		FORESHORTEN: 2,
+		FILTER: 3
+	};
+
+	const MaterialMode = {
+		NONE: 0,
+		NULL: 1,
+		DOUBLE: 2
+	};
+
+	var getFinalTransform = function ( transformStack ) {
+
+		var transform = new Matrix4();
+
+		transformStack.forEach( ( t ) => {
+
+			transform.multiply( t );
+
+		} );
+
+		return transform;
+
+	};
 
 	var triangulateFacesWithShapes = ( function () {
 
@@ -125,7 +138,7 @@ var RWXLoader = ( function () {
 
 				_tmp.subVectors( vertices[ loop[ i ] ], _ctr );
 				projVertices.push( new Vector2( _tmp.dot( _x ), _tmp.dot( _y ) ) );
-				newUvs.push( uvs[ loop[ i ] ] ) ;
+				newUvs.push( uvs[ loop[ i ] ] );
 
 			}
 
@@ -148,7 +161,7 @@ var RWXLoader = ( function () {
 					geometry.faces[ i ].a + offset,
 					geometry.faces[ i ].b + offset,
 					geometry.faces[ i ].c + offset
-        );
+				);
 
 				face.materialIndex = materialID;
 				faces.push( face );
@@ -161,147 +174,8 @@ var RWXLoader = ( function () {
 
 	} )();
 
-	const LightSampling = {
-		FACET: 1,
-		VERTEX: 2
-	};
-
-	const GeometrySampling = {
-		POINTCOULD: 1,
-		WIREFRAME: 2,
-		SOLID: 3
-	};
-
-	const TextureMode = {
-		LIT: 1,
-		FORESHORTEN: 2,
-		FILTER: 3
-	};
-
-	const MaterialMode = {
-		NONE: 0,
-		NULL: 1,
-		DOUBLE: 2
-	};
-
-	var RWXState = ( function () {
-
-		function RWXState() {
-
-			// Material related properties start here
-			this.color = [ 0.0, 0.0, 0.0 ]; // Red, Green, Blue
-			this.surface = [ 0.0, 0.0, 0.0 ]; // Ambience, Diffusion, Specularity
-			this.opacity = 1.0;
-			this.lightsampling = LightSampling.FACET;
-			this.geometrysampling = GeometrySampling.SOLID;
-			this.texturemodes = [ TextureMode
-				.LIT,
-			]; // There's possibly more than one mode enabled at a time (hence why we use an array)
-			this.materialmode = MaterialMode.NONE; // Neither NULL nor DOUBLE: we only render one side of the polygon
-			this.texture = null;
-			this.mask = null;
-			this.collision = true;
-			// End of material related properties
-
-			this.transform = new Matrix4();
-
-		}
-
-		RWXState.prototype = {
-
-			constructor: RWXState,
-
-			getMatSignature: function () {
-
-				var sign = this.color[ 0 ].toFixed( 3 ) + this.color[ 1 ].toFixed( 3 ) + this.color[ 2 ].toFixed( 3 );
-				sign += this.surface[ 0 ].toFixed( 3 ) + this.surface[ 1 ].toFixed( 3 ) + this.surface[ 2 ].toFixed( 3 );
-				sign += this.opacity.toFixed( 3 );
-				sign += this.lightsampling.toString() + this.geometrysampling.toString();
-				this.texturemodes.forEach( ( tm ) => {
-
-					sign += tm.toString();
-
-				} );
-				sign += this.materialmode.toString();
-
-				if ( this.texture != null ) {
-
-					sign += this.texture;
-
-				}
-
-				sign += this.collision.toString();
-
-				return sign;
-
-			}
-
-		};
-
-		return RWXState;
-
-	} )();
-
-	var RWXMaterial = ( function () {
-
-		function RWXMaterial() {
-
-			// Material related properties start here
-			this.color = [ 0.0, 0.0, 0.0 ]; // Red, Green, Blue
-			this.surface = [ 0.0, 0.0, 0.0 ]; // Ambience, Diffusion, Specularity
-			this.opacity = 1.0;
-			this.lightsampling = LightSampling.FACET;
-			this.geometrysampling = GeometrySampling.SOLID;
-			this.texturemodes = [ TextureMode
-				.LIT,
-			]; // There's possibly more than one mode enabled at a time (hence why we use an array)
-			this.materialmode = MaterialMode.NONE; // Neither NULL nor DOUBLE: we only render one side of the polygon
-			this.texture = null;
-			this.mask = null;
-			this.collision = true;
-			// End of material related properties
-
-			this.transform = new Matrix4();
-
-		}
-
-		RWXMaterial.prototype = {
-
-			constructor: RWXMaterial,
-
-			getMatSignature: function () {
-
-				var sign = this.color[ 0 ].toFixed( 3 ) + this.color[ 1 ].toFixed( 3 ) + this.color[ 2 ].toFixed( 3 );
-				sign += this.surface[ 0 ].toFixed( 3 ) + this.surface[ 1 ].toFixed( 3 ) + this.surface[ 2 ].toFixed( 3 );
-				sign += this.opacity.toFixed( 3 );
-				sign += this.lightsampling.toString() + this.geometrysampling.toString();
-				this.texturemodes.forEach( ( tm ) => {
-
-					sign += tm.toString();
-
-				} );
-				sign += this.materialmode.toString();
-
-				if ( this.texture != null ) {
-
-					sign += this.texture;
-
-				}
-
-				sign += this.collision.toString();
-
-				return sign;
-
-			}
-
-		};
-
-		return RWXMaterial;
-
-	} )();
-
 	var makeThreeMaterial = function ( rwxMaterial, folder, texExtension = "jpg", maskExtension =
-		"zip", jsZip = null, jsZipUtils = null ) {
+	"zip", jsZip = null, jsZipUtils = null ) {
 
 		var materialDict = {};
 
@@ -417,10 +291,92 @@ var RWXLoader = ( function () {
 
 	};
 
+	var resetGeometry = function ( ctx ) {
+
+		ctx.currentGeometry = new Geometry();
+		ctx.currentGeometry.faceVertexUvs[ 0 ] = [];
+		ctx.currentUVs = [];
+
+	};
+
+	var makeMeshToCurrentGroup = function ( ctx, applyTransform = false ) {
+
+		ctx.currentGeometry.uvsNeedUpdate = true;
+		ctx.currentGeometry.computeVertexNormals();
+		var mesh = new Mesh( ctx.currentGeometry, ctx.materialManager.getCurrentMaterialList() );
+
+		if ( applyTransform ) {
+
+			mesh.applyMatrix4( ctx.currentTransform );
+
+		}
+
+		ctx.currentGroup.add( mesh );
+
+	};
+
+	var RWXMaterial = ( function () {
+
+		function RWXMaterial() {
+
+			// Material related properties start here
+			this.color = [ 0.0, 0.0, 0.0 ]; // Red, Green, Blue
+			this.surface = [ 0.0, 0.0, 0.0 ]; // Ambience, Diffusion, Specularity
+			this.opacity = 1.0;
+			this.lightsampling = LightSampling.FACET;
+			this.geometrysampling = GeometrySampling.SOLID;
+			this.texturemodes = [ TextureMode
+				.LIT,
+			]; // There's possibly more than one mode enabled at a time (hence why we use an array)
+			this.materialmode = MaterialMode.NONE; // Neither NULL nor DOUBLE: we only render one side of the polygon
+			this.texture = null;
+			this.mask = null;
+			this.collision = true;
+			// End of material related properties
+
+			this.transform = new Matrix4();
+
+		}
+
+		RWXMaterial.prototype = {
+
+			constructor: RWXMaterial,
+
+			getMatSignature: function () {
+
+				var sign = this.color[ 0 ].toFixed( 3 ) + this.color[ 1 ].toFixed( 3 ) + this.color[ 2 ].toFixed( 3 );
+				sign += this.surface[ 0 ].toFixed( 3 ) + this.surface[ 1 ].toFixed( 3 ) + this.surface[ 2 ].toFixed( 3 );
+				sign += this.opacity.toFixed( 3 );
+				sign += this.lightsampling.toString() + this.geometrysampling.toString();
+				this.texturemodes.forEach( ( tm ) => {
+
+					sign += tm.toString();
+
+				} );
+				sign += this.materialmode.toString();
+
+				if ( this.texture != null ) {
+
+					sign += this.texture;
+
+				}
+
+				sign += this.collision.toString();
+
+				return sign;
+
+			}
+
+		};
+
+		return RWXMaterial;
+
+	} )();
+
 	var RWXMaterialManager = ( function () {
 
 		function RWXMaterialManager( folder, texExtension = "jpg", maskExtension =
-			"zip", jsZip = null, jsZipUtils = null ) {
+		"zip", jsZip = null, jsZipUtils = null ) {
 
 			this.folder = folder;
 			this.texExtension = texExtension;
@@ -444,30 +400,29 @@ var RWXLoader = ( function () {
 
 				const materialSignature = this.currentRWXMaterial.getMatSignature();
 
-				/* This gets called when the material is actually required by (at least) one face,
-				* meaning we need to save the material in the map if it's not already done */
+				// This gets called when the material is actually required by (at least) one face,
+				// meaning we need to save the material in the map if it's not already done
 				if ( this.threeMaterialMap[ materialSignature ] === undefined ) {
 
-					this.threeMaterialMap[ materialSignature ] = makeThreeMaterial( Object.assign(new RWXMaterial(), this.currentRWXMaterial),
+					this.threeMaterialMap[ materialSignature ] = makeThreeMaterial( Object.assign( new RWXMaterial(), this.currentRWXMaterial ),
 						this.folder, this.texExtension, this.maskExtension, this.jsZip, this.jsZipUtils );
 					this.threeMaterialMap[ materialSignature ].needsUpdate = true;
 
 				}
 
-				if ( this.currentMaterialSignature != materialSignature) {
+				if ( this.currentMaterialSignature != materialSignature ) {
 
 					this.currentMaterialSignature = materialSignature;
 
 					// We're onto a new material given the current list, we need to add it to the list and increment the ID
-
 					if ( this.currentMaterialID === null ) {
 
 						this.currentMaterialID = 0;
 
 					} else {
 
-						this.currentMaterialID++;
- 
+						this.currentMaterialID ++;
+
 					}
 
 					this.currentMaterialList.push( this.threeMaterialMap[ materialSignature ] );
@@ -498,520 +453,6 @@ var RWXLoader = ( function () {
 
 	} )();
 
-	var RWXVertex = ( function () {
-
-		function RWXVertex( x, y, z, u = null, v = null ) {
-
-			this.x = x;
-			this.y = y;
-			this.z = z;
-			this.u = u;
-			this.v = v;
-
-		}
-
-		RWXVertex.prototype = {
-
-			constructor: RWXVertex
-
-		};
-
-		return RWXVertex;
-
-	} )();
-
-	var RWXShape = ( function () {
-
-		function RWXShape( state = null ) {
-
-			this.state = new RWXState();
-			if ( state != null ) {
-
-				Object.assign( this.state, state );
-
-			}
-
-			this.verticesId = [];
-
-		}
-
-		RWXShape.prototype = {
-
-			constructor: RWXShape,
-
-		};
-
-		return RWXShape;
-
-	} )();
-
-	var RWXTriangle = ( function () {
-
-		function RWXTriangle( v1, v2, v3, state = new RWXState() ) {
-
-			RWXShape.call( this, state );
-			this.verticesId = [ v1, v2, v3 ];
-
-		}
-
-		RWXTriangle.prototype = Object.assign( Object.create( RWXShape.prototype ), {
-
-			constructor: RWXTriangle,
-
-			asTriangles: function ( offset = 0 ) {
-
-				if ( offset ) {
-
-					return [ new RWXTriangle( this.verticesId[ 0 ] + offset,
-						this.verticesId[ 1 ] + offset,
-						this.verticesId[ 2 ] + offset,
-						this.state ) ];
-
-				} else {
-
-					return [ this ];
-
-				}
-
-			},
-
-			asFace3: function ( offset = 0 ) {
-
-				return new Face3( this.verticesId[ 0 ] + offset,
-					this.verticesId[ 1 ] + offset,
-					this.verticesId[ 2 ] + offset );
-
-			}
-
-		} );
-
-		return RWXTriangle;
-
-	} )();
-
-	var RWXQuad = ( function () {
-
-		function RWXQuad( v1, v2, v3, v4, state = new RWXState() ) {
-
-			RWXShape.call( this, state );
-			this.verticesId = [ v1, v2, v3, v4 ];
-
-		}
-
-		RWXQuad.prototype = Object.assign( Object.create( RWXShape.prototype ), {
-
-			constructor: RWXQuad,
-
-			asTriangles: function ( offset = 0 ) {
-
-				return [ new RWXTriangle( this.verticesId[ 0 ] + offset,
-					this.verticesId[ 1 ] + offset,
-					this.verticesId[ 2 ] + offset,
-					this.state ),
-				new RWXTriangle( this.verticesId[ 0 ] + offset,
-					this.verticesId[ 2 ] + offset,
-					this.verticesId[ 3 ] + offset,
-					this.state )
-				];
-
-			}
-
-		} );
-
-		return RWXQuad;
-
-	} )();
-
-	var RWXPolygon = ( function () {
-
-		function RWXPolygon( verticesId, state = new RWXState() ) {
-
-			RWXShape.call( this, state );
-			this.verticesId = verticesId;
-
-			if ( this.verticesId[ 0 ] == this.verticesId.slice( - 1 )[ 0 ] )
-				this.verticesId.splice( - 1, 1 );
-
-		}
-
-		RWXPolygon.prototype = Object.assign( Object.create( RWXShape.prototype ), {
-
-			constructor: RWXPolygon,
-
-			asLoop: function ( offset = 0 ) {
-
-				if ( offset ) {
-
-					var loop = [];
-					this.verticeId.forEach( ( id ) => {
-
-						loop.push( id + offset );
-
-					} );
-					return loop;
-
-				} else {
-
-					return this.verticesId;
-
-				}
-
-			}
-
-		} );
-
-		return RWXPolygon;
-
-	} )();
-
-	var RWXScope = ( function () {
-
-		function RWXScope( state = null ) {
-
-			this.state = new RWXState();
-			if ( state != null ) {
-
-				Object.assign( this.state, state );
-
-			}
-
-			this.vertices = [];
-			this.shapes = [];
-
-		}
-
-		RWXScope.prototype = {
-
-			constructor: RWXScope,
-
-			getTriangles: function ( offset = 0 ) {
-
-				var faces = [];
-				this.shapes.forEach( ( shape ) => {
-
-					if ( typeof shape.asTriangles === 'function' ) {
-
-						faces.push( ...shape.asTriangles( offset ) );
-
-					}
-
-				} );
-
-				return faces;
-
-			},
-
-			getPolys: function () {
-
-				var polys = [];
-				this.shapes.forEach( ( shape ) => {
-
-					if ( typeof shape.asLoop === 'function' ) {
-
-						polys.push( shape );
-
-					}
-
-				} );
-
-				return polys;
-
-			},
-
-		};
-
-		return RWXScope;
-
-	} )();
-
-	var RWXClump = ( function () {
-
-		function RWXClump( state = new RWXState() ) {
-
-			RWXScope.call( this, state );
-			this.clumps = [];
-
-		}
-
-		RWXClump.prototype = Object.assign( Object.create( RWXScope.prototype ), {
-
-			constructor: RWXClump,
-
-			applyProto: function ( proto ) {
-
-				var offset = this.vertices.length;
-
-				var shapes = [];
-				if ( proto.shapes != null ) {
-
-					Object.assign( shapes, proto.shapes );
-
-				}
-
-				shapes.forEach( ( shape ) => {
-
-					// Collision status of the clump takes precedence over the one from the proto
-					var state = new RWXState();
-					Object.assign( state, shape.state );
-					state.collision = this.state.collision;
-					shape.state = state;
-
-					for ( var i = 0; i < shape.verticesId.length; i ++ ) {
-
-						shape.verticesId[ i ] += offset;
-
-					}
-
-				} );
-
-				this.shapes.push( ...shapes );
-
-				proto.vertices.forEach( ( vert ) => {
-
-					var mat = proto.state.transform.clone();
-					var vec4 = new Vector4( vert.x, vert.y, vert.z, 1 );
-					vec4.applyMatrix4( mat );
-					this.vertices.push( new RWXVertex( vec4.x, vec4.y, vec4.z, vert.u, vert.v ) );
-
-				} );
-
-			}
-
-		} );
-
-		return RWXClump;
-
-	} )();
-
-	var RWXObject = ( function () {
-
-		function RWXObject() {
-
-			this.protos = [];
-			this.clumps = [];
-			this.state = new RWXState();
-
-		}
-
-		RWXObject.prototype = {
-
-			constructor: RWXObject
-
-		};
-
-		return RWXObject;
-
-	} )();
-
-	var gatherVerticesRecursive = function ( clump ) {
-
-		var vertices = [];
-		var uvs = [];
-		var transform = clump.state.transform;
-
-		clump.vertices.forEach( ( v ) => {
-
-			var vert = ( new Vector4( v.x, v.y, v.z, 1 ) ).applyMatrix4( transform );
-			vertices.push( new Vector3( vert.x, vert.y, vert.z ) );
-			uvs.push( [ v.u, v.v ] );
-
-		} );
-
-		clump.clumps.forEach( ( c ) => {
-
-			var [ tmpVertices, tmpUvs ] = gatherVerticesRecursive( c );
-			vertices.push( ...tmpVertices );
-			uvs.push( ...tmpUvs );
-
-		} );
-
-		return [ vertices, uvs ];
-
-	};
-
-	var gatherFacesRecursive = function ( clump, materialsMap = {}, offset = 0 ) {
-
-		var faces = [];
-		var tmpFaces = [];
-		var loops = [];
-		var loopSignatures = [];
-		var tmpLoops = [];
-		var tmpLoopsignatures = [];
-		var tmpTriangles = clump.getTriangles( offset );
-		var tmpPolys = clump.getPolys();
-
-		tmpTriangles.forEach( ( tmpTriangle ) => {
-
-			var face = tmpTriangle.asFace3();
-			face.materialIndex = materialsMap[ tmpTriangle.state.getMatSignature() ];
-			faces.push( face );
-
-		} );
-
-		tmpPolys.forEach( ( tmpPoly ) => {
-
-			var loop = [];
-			tmpPoly.asLoop().forEach( ( verticeId ) => {
-
-				loop.push( verticeId + offset );
-
-			} );
-			loops.push( loop );
-			loopSignatures.push( materialsMap[ tmpPoly.state.getMatSignature() ] );
-
-		} );
-
-		offset += clump.vertices.length;
-
-		clump.clumps.forEach( ( c ) => {
-
-			[ tmpFaces, tmpLoops, tmpLoopsignatures, offset ] = gatherFacesRecursive( c, materialsMap, offset );
-			faces.push( ...tmpFaces );
-			loops.push( ...tmpLoops );
-			loopSignatures.push( ...tmpLoopsignatures );
-
-		} );
-
-		return [ faces, loops, loopSignatures, offset ];
-
-	};
-
-	var makeMaterialsRecursive = function ( clump, folder, materialMap = {}, texExtension = "jpg", maskExtension =
-	"zip", jsZip = null, jsZipUtils = null ) {
-
-		clump.shapes.forEach( ( shape ) => {
-
-			var matSign = shape.state.getMatSignature();
-
-			if ( materialMap[ matSign ] === undefined ) {
-
-				var materialDict = {};
-
-				if ( shape.state.materialmode == MaterialMode.DOUBLE ) {
-
-					materialDict[ 'side' ] = DoubleSide;
-
-				} else if ( shape.state.materialmode == MaterialMode.NULL ) {
-
-					materialDict[ 'visible' ] = false;
-
-				}
-
-				if ( shape.state.opacity < 1.0 ) {
-
-					materialDict[ 'transparent' ] = true;
-
-				}
-
-				materialDict[ 'specular' ] = 0xffffff;
-				materialDict[ 'emissiveIntensity' ] = shape.state.surface[ 1 ];
-				materialDict[ 'shininess' ] = shape.state.surface[ 2 ] *
-				30; // '30' is the default Phong material shininess value
-				materialDict[ 'opacity' ] = shape.state.opacity;
-
-				var phongMat = new MeshPhongMaterial( materialDict );
-
-				phongMat.userData[ 'collision' ] = shape.state.collision;
-
-				if ( shape.state.texture == null ) {
-
-					phongMat.color.set( ( Math.trunc( shape.state.color[ 0 ] * 255 ) << 16 ) + ( Math.trunc( shape.state
-						.color[ 1 ] * 255 ) << 8 ) + Math.trunc( shape.state.color[ 2 ] * 255 ) );
-
-				} else {
-
-					// TODO: try to instanciate once
-					var loader = new TextureLoader();
-					var texturePath = folder + '/' + shape.state.texture + '.' + texExtension;
-					var texture = loader.load( texturePath );
-					texture.wrapS = RepeatWrapping;
-					texture.wrapT = RepeatWrapping;
-					phongMat.map = texture;
-
-					if ( shape.state.mask != null ) {
-
-						phongMat.alphaTest = 0.2;
-						phongMat.transparent = true;
-
-						if ( maskExtension == "zip" && jsZip != null && jsZipUtils != null ) {
-
-							// We try to extract the bmp mask from the archive
-							const zipPath = folder + '/' + shape.state.mask + '.' + maskExtension;
-
-							// We load the mask asynchronously using JSZip and JSZipUtils (if available)
-							new jsZip.external.Promise( function ( resolve, reject ) {
-
-								jsZipUtils.getBinaryContent( zipPath, function ( err, data ) {
-
-									if ( err ) {
-
-										reject( err );
-
-									} else {
-
-										resolve( data );
-
-									}
-
-								} );
-
-							} ).then( jsZip.loadAsync ).then( function ( zip ) {
-
-								// Chain with the bmp content promise
-								return zip.file( shape.state.mask + '.bmp' ).async( "uint8array" );
-
-							} ).then( function success( buffer ) {
-
-								// Load the bmp image into a data uri string
-								const bmpURI = "data:image/bmp;base64," +
-									btoa( String.fromCharCode.apply( null, new Uint16Array( buffer ) ) );
-
-								// Make a texture out of the bmp mask, apply it to the material
-								var maskTexture = loader.load( bmpURI );
-								maskTexture.wrapS = RepeatWrapping;
-								maskTexture.wrapT = RepeatWrapping;
-								phongMat.alphaMap = maskTexture;
-
-								// Notify three.js that this material has been updated (to re-render it).
-								phongMat.needsUpdate = true;
-
-							}, function error( e ) {
-
-								throw e;
-
-							} );
-
-						} else if ( maskExtension != 'zip' ) {
-
-							var bmpPath = folder + '/' + shape.state.mask + '.' + maskExtension;
-							var maskTexture = loader.load( bmpPath );
-							maskTexture.wrapS = RepeatWrapping;
-							maskTexture.wrapT = RepeatWrapping;
-							phongMat.alphaMap = maskTexture;
-
-						}
-
-					}
-
-				}
-
-				materialMap[ matSign ] = phongMat;
-
-			}
-
-		} );
-
-		clump.clumps.forEach( ( subClump ) => {
-
-			materialMap = Object.assign( {}, materialMap,
-				makeMaterialsRecursive( subClump, folder, materialMap, texExtension, maskExtension, jsZip, jsZipUtils ) );
-
-		} );
-
-		return materialMap;
-
-	};
-
 	function RWXLoader( manager ) {
 
 		Loader.call( this, manager );
@@ -1024,7 +465,7 @@ var RWXLoader = ( function () {
 		this.clumpbeginRegex = new RegExp( "^ *(clumpbegin).*$", 'i' );
 		this.clumpendRegex = new RegExp( "^ *(clumpend).*$", 'i' );
 		this.transformbeginRegex = new RegExp( "^ *(transformbegin).*$", 'i' );
-		this.transformendRegex = new RegExp( "^ *(transformend).*$", 'i' );  
+		this.transformendRegex = new RegExp( "^ *(transformend).*$", 'i' );
 		this.protobeginRegex = new RegExp( "^ *(protobegin) +([A-Za-z0-9_\\-]+).*$", 'i' );
 		this.protoinstanceRegex = new RegExp( "^ *(protoinstance) +([A-Za-z0-9_\\-]+).*$", 'i' );
 		this.protoendRegex = new RegExp( "^ *(protoend).*$", 'i' );
@@ -1127,19 +568,21 @@ var RWXLoader = ( function () {
 
 			const defaultSurface = [ 0.0, 0.0, 0.0 ];
 
-			var groupStack = [];
-			var currentGroup = null;
+			var ctx = {
+				groupStack: [],
+				currentGroup: null,
 
-			var transformStack = [];
+				transformStack: [],
 
-			var currentTransform = new Matrix4();
-			var currentGeometry = null;
-			var currentUVs = [];
+				currentTransform: new Matrix4(),
+				currentGeometry: null,
+				currentUVs: [],
 
-			var rwxClumpStack = [];
-			var rwxProtoDict = {};
+				rwxClumpStack: [],
+				rwxProtoDict: {},
 
-		  var materialManager = new RWXMaterialManager( textureFolderPath, this.texExtension, this.maskExtension, this.jsZip, this.jsZipUtils );
+				materialManager: new RWXMaterialManager( textureFolderPath, this.texExtension, this.maskExtension, this.jsZip, this.jsZipUtils )
+			};
 
 			const lines = str.split( /[\n\r]+/g );
 
@@ -1161,11 +604,11 @@ var RWXLoader = ( function () {
 				res = this.modelbeginRegex.exec( line );
 				if ( res != null ) {
 
-					groupStack.push( new Group() );
-					currentGroup = groupStack.slice( - 1 )[ 0 ];
+					ctx.groupStack.push( new Group() );
+					ctx.currentGroup = ctx.groupStack.slice( - 1 )[ 0 ];
 
-					transformStack.push( currentTransform );
-					currentTransform = new Matrix4();
+					ctx.transformStack.push( ctx.currentTransform );
+					ctx.currentTransform = new Matrix4();
 
 					continue;
 
@@ -1175,15 +618,14 @@ var RWXLoader = ( function () {
 				if ( res != null ) {
 
 					var group = new Group();
-          currentGroup.add( group );
-					groupStack.push( group );
-					currentGroup = group;
-					currentGeometry = new Geometry();
-					currentGeometry.faceVertexUvs[ 0 ] = [];
-          currentUVs = [];
+					ctx.currentGroup.add( group );
+					ctx.groupStack.push( group );
+					ctx.currentGroup = group;
 
-					transformStack.push( currentTransform );
-					currentTransform = new Matrix4();
+					resetGeometry( ctx );
+
+					ctx.transformStack.push( ctx.currentTransform );
+					ctx.currentTransform = new Matrix4();
 
 					continue;
 
@@ -1192,19 +634,15 @@ var RWXLoader = ( function () {
 				res = this.clumpendRegex.exec( line );
 				if ( res != null ) {
 
-					currentGeometry.uvsNeedUpdate = true;
-					currentGeometry.computeVertexNormals();
-					var mesh = new Mesh( currentGeometry, materialManager.getCurrentMaterialList() );
+					makeMeshToCurrentGroup( ctx );
 
-					currentGroup.add( mesh );
-					currentGroup = groupStack.pop();
-					currentTransform = transformStack.pop();
+					ctx.currentGroup = ctx.groupStack.pop();
+					ctx.currentTransform = ctx.transformStack.pop();
 
-					currentGeometry = new Geometry();
-					currentGeometry.faceVertexUvs[ 0 ] = [];
-					currentUVs = [];
+					resetGeometry( ctx );
 
-					materialManager.resetCurrentMaterialList();
+					ctx.materialManager.resetCurrentMaterialList();
+
 					continue;
 
 				}
@@ -1212,13 +650,13 @@ var RWXLoader = ( function () {
 				res = this.transformbeginRegex.exec( line );
 				if ( res != null ) {
 
-          var group = new Group();
-          currentGroup.add( group );
-					groupStack.push( group );
-					currentGroup = group;
+					var group = new Group();
+					ctx.currentGroup.add( group );
+					ctx.groupStack.push( group );
+					ctx.currentGroup = group;
 
-					transformStack.push( currentTransform );
-					currentTransform = new Matrix4();
+					ctx.transformStack.push( ctx.currentTransform );
+					ctx.currentTransform = new Matrix4();
 
 					continue;
 
@@ -1227,10 +665,10 @@ var RWXLoader = ( function () {
 				res = this.transformendRegex.exec( line );
 				if ( res != null ) {
 
-          currentGroup = groupStack.pop();
-          currentTransform = transformStack.pop();
+					ctx.currentGroup = ctx.groupStack.pop();
+					ctx.currentTransform = ctx.transformStack.pop();
 
-          continue;
+					continue;
 
 				}
 
@@ -1238,14 +676,14 @@ var RWXLoader = ( function () {
 				if ( res != null ) {
 
 					var name = res[ 2 ];
-					rwxProtoDict[ name ] = new Group();
-					currentTransform = new Matrix4();
-					currentGeometry = new Geometry();
-					currentGeometry.faceVertexUvs[ 0 ] = [];
-					currentUVs = [];
+					ctx.rwxProtoDict[ name ] = new Group();
+					ctx.currentTransform = new Matrix4();
+					ctx.currentGeometry = new Geometry();
+					ctx.currentGeometry.faceVertexUvs[ 0 ] = [];
+					ctx.currentUVs = [];
 
-					materialManager.currentRWXMaterial = new RWXMaterial();
-					currentGroup = rwxProtoDict[ name ];
+					ctx.materialManager.currentRWXMaterial = new RWXMaterial();
+					ctx.currentGroup = ctx.rwxProtoDict[ name ];
 					continue;
 
 				}
@@ -1253,21 +691,17 @@ var RWXLoader = ( function () {
 				res = this.protoendRegex.exec( line );
 				if ( res != null ) {
 
- 					currentGeometry.uvsNeedUpdate = true;
- 					currentGeometry.computeVertexNormals();
- 					var mesh = new Mesh( currentGeometry, materialManager.getCurrentMaterialList() );
+					makeMeshToCurrentGroup( ctx, true );
 
-					mesh.applyMatrix4( currentTransform );
-					currentGroup.add( mesh );
-					currentGroup = groupStack.slice( -1 )[ 0 ];
-					currentTransform = transformStack.slice( -1 )[ 0 ];
+					ctx.currentGroup = ctx.groupStack.slice( - 1 )[ 0 ];
+					ctx.currentTransform = ctx.transformStack.slice( - 1 )[ 0 ];
 
-					currentGeometry = new Geometry();
-					currentGeometry.faceVertexUvs[ 0 ] = [];
-					currentUVs = [];
+					ctx.currentGeometry = new Geometry();
+					ctx.currentGeometry.faceVertexUvs[ 0 ] = [];
+					ctx.currentUVs = [];
 
-					materialManager.resetCurrentMaterialList()
-            
+					ctx.materialManager.resetCurrentMaterialList();
+
 					continue;
 
 				}
@@ -1276,11 +710,11 @@ var RWXLoader = ( function () {
 				if ( res != null ) {
 
 					name = res[ 2 ];
-					  var protoMesh = rwxProtoDict[ name ].clone();
-            var tmpTransform = getFinalTransform( transformStack );
-            tmpTransform.multiply( currentTransform );
-            protoMesh.applyMatrix4( tmpTransform );
-					currentGroup.add( protoMesh );
+					var protoMesh = ctx.rwxProtoDict[ name ].clone();
+					var tmpTransform = getFinalTransform( ctx.transformStack );
+					tmpTransform.multiply( ctx.currentTransform );
+					protoMesh.applyMatrix4( tmpTransform );
+					ctx.currentGroup.add( protoMesh );
 					continue;
 
 				}
@@ -1290,21 +724,21 @@ var RWXLoader = ( function () {
 
 					if ( res[ 2 ].toLowerCase() == "null" ) {
 
-						materialManager.currentRWXMaterial.texture = null;
+						ctx.materialManager.currentRWXMaterial.texture = null;
 
 					} else {
 
-						materialManager.currentRWXMaterial.texture = res[ 2 ];
+						ctx.materialManager.currentRWXMaterial.texture = res[ 2 ];
 
 					}
 
 					if ( res[ 4 ] !== undefined ) {
 
-						materialManager.currentRWXMaterial.mask = res[ 4 ];
+						ctx.materialManager.currentRWXMaterial.mask = res[ 4 ];
 
 					} else {
 
-						materialManager.currentRWXMaterial.mask = null;
+						ctx.materialManager.currentRWXMaterial.mask = null;
 
 					}
 
@@ -1323,10 +757,10 @@ var RWXLoader = ( function () {
 					} );
 
 					var face = new Face3( vId[ 0 ], vId[ 1 ], vId[ 2 ] );
-					face.materialIndex = materialManager.getCurrentMaterialID();
-					currentGeometry.faces.push( face );
-          currentGeometry.faceVertexUvs[ 0 ].push( [
-						currentUVs[ vId[ 0 ] ], currentUVs[ vId[ 1 ] ], currentUVs[ vId[ 2 ] ]
+					face.materialIndex = ctx.materialManager.getCurrentMaterialID();
+					ctx.currentGeometry.faces.push( face );
+					ctx.currentGeometry.faceVertexUvs[ 0 ].push( [
+						ctx.currentUVs[ vId[ 0 ] ], ctx.currentUVs[ vId[ 1 ] ], ctx.currentUVs[ vId[ 2 ] ]
 					] );
 
 					continue;
@@ -1344,17 +778,17 @@ var RWXLoader = ( function () {
 					} );
 
 					var face = new Face3( vId[ 0 ], vId[ 1 ], vId[ 2 ] );
-					face.materialIndex = materialManager.getCurrentMaterialID();
-					currentGeometry.faces.push( face );
+					face.materialIndex = ctx.materialManager.getCurrentMaterialID();
+					ctx.currentGeometry.faces.push( face );
 					face = new Face3( vId[ 0 ], vId[ 2 ], vId[ 3 ] );
-					face.materialIndex = materialManager.getCurrentMaterialID();
-					currentGeometry.faces.push( face );
+					face.materialIndex = ctx.materialManager.getCurrentMaterialID();
+					ctx.currentGeometry.faces.push( face );
 
- 					currentGeometry.faceVertexUvs[ 0 ].push( [
-						currentUVs[ vId[ 0 ] ], currentUVs[ vId[ 1 ] ], currentUVs[ vId[ 2 ] ]
+ 					ctx.currentGeometry.faceVertexUvs[ 0 ].push( [
+						ctx.currentUVs[ vId[ 0 ] ], ctx.currentUVs[ vId[ 1 ] ], ctx.currentUVs[ vId[ 2 ] ]
 					] );
-					currentGeometry.faceVertexUvs[ 0 ].push( [
-						currentUVs[ vId[ 0 ] ], currentUVs[ vId[ 2 ] ], currentUVs[ vId[ 3 ] ]
+					ctx.currentGeometry.faceVertexUvs[ 0 ].push( [
+						ctx.currentUVs[ vId[ 0 ] ], ctx.currentUVs[ vId[ 2 ] ], ctx.currentUVs[ vId[ 3 ] ]
 					] );
 
 					continue;
@@ -1373,11 +807,11 @@ var RWXLoader = ( function () {
 					} );
 
 					const [ newVertices, newUVs, newFaces ] =
-					triangulateFacesWithShapes( currentGeometry.vertices, currentUVs, vId, materialManager.getCurrentMaterialID() );
+					triangulateFacesWithShapes( ctx.currentGeometry.vertices, ctx.currentUVs, vId, ctx.materialManager.getCurrentMaterialID() );
 
-					const preInsertionLength = currentGeometry.vertices.length;
-					currentGeometry.vertices.push( ...newVertices );
-					currentGeometry.faces.push( ...newFaces );
+					const preInsertionLength = ctx.currentGeometry.vertices.length;
+					ctx.currentGeometry.vertices.push( ...newVertices );
+					ctx.currentGeometry.faces.push( ...newFaces );
 
 					for ( var lf = 0; lf < newFaces.length; lf ++ ) {
 
@@ -1385,7 +819,7 @@ var RWXLoader = ( function () {
 						const vid2 = newFaces[ lf ].b;
 						const vid3 = newFaces[ lf ].c;
 
-						currentGeometry.faceVertexUvs[ 0 ].push( [
+						ctx.currentGeometry.faceVertexUvs[ 0 ].push( [
 							newUVs[ vid1 - preInsertionLength ],
 							newUVs[ vid2 - preInsertionLength ],
 							newUVs[ vid3 - preInsertionLength ]
@@ -1408,8 +842,8 @@ var RWXLoader = ( function () {
 					} );
 
 					var tmpVertex = new Vector4( vprops[ 0 ], vprops[ 1 ], vprops[ 2 ] );
-					tmpVertex.applyMatrix4( getFinalTransform ( transformStack ) );
-					currentGeometry.vertices.push( new Vector3( tmpVertex.x, tmpVertex.y, tmpVertex.z ) );
+					tmpVertex.applyMatrix4( getFinalTransform( ctx.transformStack ) );
+					ctx.currentGeometry.vertices.push( new Vector3( tmpVertex.x, tmpVertex.y, tmpVertex.z ) );
 
 					if ( typeof ( res[ 7 ] ) != "undefined" ) {
 
@@ -1420,13 +854,11 @@ var RWXLoader = ( function () {
 
 						} );
 
-						currentUVs.push( new Vector2( moreVprops[ 0 ], 1 - moreVprops[ 1 ] ) );
+						ctx.currentUVs.push( new Vector2( moreVprops[ 0 ], 1 - moreVprops[ 1 ] ) );
 
-					}
-					else
-					{
+					} else {
 
-						currentUVs.push( new Vector2( 0.0, 0.0 ) );
+						ctx.currentUVs.push( new Vector2( 0.0, 0.0 ) );
 
 					}
 
@@ -1446,7 +878,7 @@ var RWXLoader = ( function () {
 
 					if ( cprops.length == 3 ) {
 
-						materialManager.currentRWXMaterial.color = cprops;
+						ctx.materialManager.currentRWXMaterial.color = cprops;
 
 					}
 
@@ -1457,7 +889,7 @@ var RWXLoader = ( function () {
 				res = this.opacityRegex.exec( line );
 				if ( res != null ) {
 
-					materialManager.currentRWXMaterial.opacity = parseFloat( res[ 2 ] );
+					ctx.materialManager.currentRWXMaterial.opacity = parseFloat( res[ 2 ] );
 					continue;
 
 				}
@@ -1474,7 +906,7 @@ var RWXLoader = ( function () {
 
 					if ( tprops.length == 16 ) {
 
-						currentTransform.fromArray( tprops );
+						ctx.currentTransform.fromArray( tprops );
 
 					}
 
@@ -1498,22 +930,22 @@ var RWXLoader = ( function () {
 
 						if ( rprops[ 0 ] ) {
 
-							rotateM.makeRotationX( MathUtils.degToRad( -rprops[ 3 ] ) );
-							currentTransform.premultiply( rotateM );
+							rotateM.makeRotationX( MathUtils.degToRad( - rprops[ 3 ] ) );
+							ctx.currentTransform.premultiply( rotateM );
 
 						}
 
 						if ( rprops[ 1 ] ) {
 
-							rotateM.makeRotationY( MathUtils.degToRad( -rprops[ 3 ] ) );
-							currentTransform.premultiply( rotateM );
+							rotateM.makeRotationY( MathUtils.degToRad( - rprops[ 3 ] ) );
+							ctx.currentTransform.premultiply( rotateM );
 
 						}
 
 						if ( rprops[ 2 ] ) {
 
-							rotateM.makeRotationZ( MathUtils.degToRad( -rprops[ 3 ] ) );
-							currentTransform.premultiply( rotateM );
+							rotateM.makeRotationZ( MathUtils.degToRad( - rprops[ 3 ] ) );
+							ctx.currentTransform.premultiply( rotateM );
 
 						}
 
@@ -1537,8 +969,8 @@ var RWXLoader = ( function () {
 
 					if ( sprops.length == 3 ) {
 
-            scaleM.makeScale( sprops[ 0 ], sprops[ 1 ], sprops[ 2 ] )
-						  currentTransform.premultiply( scaleM );
+						scaleM.makeScale( sprops[ 0 ], sprops[ 1 ], sprops[ 2 ] );
+						ctx.currentTransform.premultiply( scaleM );
 
 					}
 
@@ -1556,7 +988,7 @@ var RWXLoader = ( function () {
 
 					} );
 
-					materialManager.currentRWXMaterial.surface = sprops;
+					ctx.materialManager.currentRWXMaterial.surface = sprops;
 					continue;
 
 				}
@@ -1564,7 +996,7 @@ var RWXLoader = ( function () {
 				res = this.ambientRegex.exec( line );
 				if ( res != null ) {
 
-					materialManager.currentRWXMaterial.surface[ 0 ] = parseFloat( res[ 2 ] );
+					ctx.materialManager.currentRWXMaterial.surface[ 0 ] = parseFloat( res[ 2 ] );
 					continue;
 
 				}
@@ -1572,7 +1004,7 @@ var RWXLoader = ( function () {
 				res = this.diffuseRegex.exec( line );
 				if ( res != null ) {
 
-					materialManager.currentRWXMaterial.surface[ 1 ] = parseFloat( res[ 2 ] );
+					ctx.materialManager.currentRWXMaterial.surface[ 1 ] = parseFloat( res[ 2 ] );
 					continue;
 
 				}
@@ -1580,7 +1012,7 @@ var RWXLoader = ( function () {
 				res = this.specularRegex.exec( line );
 				if ( res != null ) {
 
-					materialManager.currentRWXMaterial.surface[ 2 ] = parseFloat( res[ 2 ] );
+					ctx.materialManager.currentRWXMaterial.surface[ 2 ] = parseFloat( res[ 2 ] );
 					continue;
 
 				}
@@ -1592,15 +1024,15 @@ var RWXLoader = ( function () {
 
 					if ( matMode == "none" ) {
 
-						materialManager.currentRWXMaterial.materialmode = MaterialMode.NONE;
+						ctx.materialManager.currentRWXMaterial.materialmode = MaterialMode.NONE;
 
 					} else if ( matMode == "null" ) {
 
-						materialManager.currentRWXMaterial.materialmode = MaterialMode.NULL;
+						ctx.materialManager.currentRWXMaterial.materialmode = MaterialMode.NULL;
 
 					} else if ( matMode == "double" ) {
 
-						materialManager.currentRWXMaterial.materialmode = MaterialMode.DOUBLE;
+						ctx.materialManager.currentRWXMaterial.materialmode = MaterialMode.DOUBLE;
 
 					}
 
@@ -1608,18 +1040,18 @@ var RWXLoader = ( function () {
 
 				}
 
-        res = this.collisionRegex.exec( line );
+				res = this.collisionRegex.exec( line );
 				if ( res != null ) {
 
 					const collision = res[ 2 ].toLowerCase();
 
 					if ( collision == "on" ) {
 
-						materialManager.currentRWXMaterial.collision = true;
+						ctx.materialManager.currentRWXMaterial.collision = true;
 
 					} else if ( collision == "off" ) {
 
-						materialManager.currentRWXMaterial.collision = false;
+						ctx.materialManager.currentRWXMaterial.collision = false;
 
 					}
 
@@ -1628,65 +1060,9 @@ var RWXLoader = ( function () {
 				}
 
 			}
-/*
-			var geometry = new Geometry();
 
-			var [ vertices, uvs ] = gatherVerticesRecursive( rwxClumpStack[ 0 ].clumps[ 0 ] );
-
-			geometry.vertices.push( ...vertices );
-
-			var materialMap = makeMaterialsRecursive( rwxClumpStack[ 0 ].clumps[ 0 ], textureFolderPath, {}, this.texExtension, this.maskExtension, this.jsZip, this.jsZipUtils );
-
-			var materialsList = [];
-
-			// make a material list
-			var i = 0;
-			Object.keys( materialMap ).forEach( ( key ) => {
-
-				materialsList.push( materialMap[ key ] );
-
-				// replace map entries with corresponding ids in materialList
-				materialMap[ key ] = i ++;
-
-			} );
-
-			var [ faces, loops, loopSignatures, offset ] = gatherFacesRecursive( rwxClumpStack[ 0 ].clumps[ 0 ],
-				materialMap );
-			geometry.faces.push( ...faces );
-
-			var [ newVertices, newUvs, newFaces ] = triangulateFacesWithShapes( geometry.vertices, uvs, loops,
-				loopSignatures );
-			geometry.vertices.push( ...newVertices );
-			geometry.faces.push( ...newFaces );
-			uvs.push( ...newUvs );
-
-			geometry.faceVertexUvs[ 0 ] = [];
-
-			for ( var i = 0; i < geometry.faces.length; i ++ ) {
-
-				var vid1 = geometry.faces[ i ].a;
-				var vid2 = geometry.faces[ i ].b;
-				var vid3 = geometry.faces[ i ].c;
-
-				geometry.faceVertexUvs[ 0 ].push( [
-					new Vector2( uvs[ vid1 ][ 0 ], uvs[ vid1 ][ 1 ] ),
-					new Vector2( uvs[ vid2 ][ 0 ], uvs[ vid2 ][ 1 ] ),
-					new Vector2( uvs[ vid3 ][ 0 ], uvs[ vid3 ][ 1 ] )
-				] );
-
-			}
-
-			geometry.uvsNeedUpdate = true;
-			geometry.computeVertexNormals();
-
-			const object = new Mesh( geometry, materialsList ); */
-
-			//groupStack[ 0 ].matrixAutoUpdate = false;
-			  //groupStack[ 0 ].matrix.makeRotationX( 3.1415 / 4.0 );
-
-			// printGroups( groupStack[ 0 ] );
-
-			return groupStack[ 0 ];
+			// We're done, return to root group to get the whole object
+			return ctx.groupStack[ 0 ];
 
 		}
 
