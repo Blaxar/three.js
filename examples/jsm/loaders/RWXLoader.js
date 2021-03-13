@@ -8,12 +8,11 @@ import {
 	Mesh,
 	Vector2,
 	Vector3,
-	Face3,
 	Matrix4,
 	Vector4,
 	MathUtils,
 	MeshPhongMaterial,
-	Geometry,
+	BufferGeometry,
 	Quaternion,
 	Plane,
 	Shape,
@@ -22,9 +21,8 @@ import {
 	RepeatWrapping,
 	FrontSide,
 	DoubleSide,
-	ImageBitmapLoader,
-	Texture,
 	Group,
+	BufferAttribute
 } from "../../../build/three.module.js";
 
 var RWXLoader = ( function () {
@@ -77,28 +75,27 @@ var RWXLoader = ( function () {
 		var _x = new Vector3();
 
 		var X = new Vector3( 1.0, 0.0, 0.0 );
-		var Y = new Vector3( 0.0, 1.0, 0.0 );
 		var Z = new Vector3( 0.0, 0.0, 1.0 );
 
 		var _tmp = new Vector3();
 
 		var _basis = new Matrix4();
 
-		return function ( vertices, uvs, loop, materialID ) {
+		return function ( vertices, uvs, loop ) {
 
 			var newVertices = [];
 			var newUvs = [];
 			var faces = [];
 
-			var offset = vertices.length;
+			var offset = vertices.length / 3;
 
-			// compute centroid
+			// Compute centroid
 			_ctr.setScalar( 0.0 );
 
 			var l = loop.length;
 			for ( var i = 0; i < l; i ++ ) {
 
-				_ctr.add( vertices[ loop[ i ] ] );
+				_ctr.add( new Vector3( vertices[ loop[ i ] * 3 ], vertices[ loop[ i ] * 3 + 1 ], vertices[ loop[ i ] * 3 + 2 ] ) );
 
 			}
 
@@ -106,11 +103,16 @@ var RWXLoader = ( function () {
 
 			var loopNormal = new Vector3( 0.0, 0.0, 0.0 );
 
-			// compute loop normal using Newell's Method
+			// Compute loop normal using Newell's Method
 			for ( var i = 0, len = loop.length; i < len; i ++ ) {
 
-				var currentVertex = vertices[ loop[ i ] ];
-				var nextVertex = vertices[ loop[ ( i + 1 ) % len ] ];
+				const currentVertex = new Vector3( vertices[ loop[ i ] * 3 ], vertices[ loop[ i ] * 3 + 1 ], vertices[ loop[ i ] * 3 + 2 ] );
+
+				var nextVertex = new Vector3(
+					vertices[ loop[ ( ( i + 1 ) % len ) ] * 3 ],
+					vertices[ loop[ ( ( i + 1 ) % len ) ] * 3 + 1 ],
+				  vertices[ loop[ ( ( i + 1 ) % len ) ] * 3 + 2 ]
+				);
 
 				loopNormal.x += ( currentVertex.y - nextVertex.y ) * ( currentVertex.z + nextVertex.z );
 				loopNormal.y += ( currentVertex.z - nextVertex.z ) * ( currentVertex.x + nextVertex.x );
@@ -120,10 +122,11 @@ var RWXLoader = ( function () {
 
 			loopNormal.normalize();
 
-			_plane.setFromNormalAndCoplanarPoint( loopNormal, vertices[ loop[ 0 ] ] );
+			const coplanarVertex = new Vector3( vertices[ loop[ 0 ] * 3 ], vertices[ loop[ 0 ] * 3 + 1 ], vertices[ loop[ 0 ] * 3 + 2 ] );
+			_plane.setFromNormalAndCoplanarPoint( loopNormal, coplanarVertex );
 			var _z = _plane.normal;
 
-			// compute basis
+			// Compute basis
 			_q.setFromUnitVectors( Z, _z );
 			_x.copy( X ).applyQuaternion( _q );
 			_y.crossVectors( _x, _z );
@@ -131,39 +134,33 @@ var RWXLoader = ( function () {
 			_basis.makeBasis( _x, _y, _z );
 			_basis.setPosition( _ctr );
 
-			// project the 3D vertices on the 2D plane
+			// Project the 3D vertices on the 2D plane
 			var projVertices = [];
 			for ( var i = 0; i < l; i ++ ) {
 
-				_tmp.subVectors( vertices[ loop[ i ] ], _ctr );
+				const currentVertex = new Vector3( vertices[ loop[ i ] * 3 ], vertices[ loop[ i ] * 3 + 1 ], vertices[ loop[ i ] * 3 + 2 ] );
+				_tmp.subVectors( currentVertex, _ctr );
 				projVertices.push( new Vector2( _tmp.dot( _x ), _tmp.dot( _y ) ) );
-				newUvs.push( uvs[ loop[ i ] ] );
+				newUvs.push( uvs[ loop[ i ] * 2 ], uvs[ loop[ i ] * 2 + 1 ] );
 
 			}
 
-			// create the geometry (Three.js triangulation with ShapeBufferGeometry)
+			// Create the geometry (Three.js triangulation with ShapeGeometry)
 			var shape = new Shape( projVertices );
 			var geometry = new ShapeGeometry( shape );
 
-			// transform geometry back to the initial coordinate system
+			// Transform geometry back to the initial coordinate system
 			geometry.applyMatrix4( _basis );
 
 			for ( var i = 0, lVertices = geometry.vertices.length; i < lVertices; i ++ ) {
 
-				newVertices.push( geometry.vertices[ i ] );
+				newVertices.push( geometry.vertices[ i ].x, geometry.vertices[ i ].y, geometry.vertices[ i ].z );
 
 			}
 
 			for ( var i = 0, lFaces = geometry.faces.length; i < lFaces; i ++ ) {
 
-				var face = new Face3(
-					geometry.faces[ i ].a + offset,
-					geometry.faces[ i ].b + offset,
-					geometry.faces[ i ].c + offset
-				);
-
-				face.materialIndex = materialID;
-				faces.push( face );
+				faces.push( geometry.faces[ i ].a + offset, geometry.faces[ i ].b + offset, geometry.faces[ i ].c + offset );
 
 			}
 
@@ -178,7 +175,11 @@ var RWXLoader = ( function () {
 
 		var materialDict = {};
 
-		if ( rwxMaterial.materialmode == MaterialMode.DOUBLE ) {
+		if ( rwxMaterial.materialmode == MaterialMode.NULL ) {
+
+			materialDict[ 'side' ] = FrontSide;
+
+		} else if ( rwxMaterial.materialmode == MaterialMode.DOUBLE ) {
 
 			materialDict[ 'side' ] = DoubleSide;
 
@@ -292,24 +293,72 @@ var RWXLoader = ( function () {
 
 	var resetGeometry = function ( ctx ) {
 
-		ctx.currentGeometry = new Geometry();
-		ctx.currentGeometry.faceVertexUvs[ 0 ] = [];
-		ctx.currentUVs = [];
+		if ( ctx.currentBufferFaceCount > 0 ) {
+
+			commitBufferGeometryGroup( ctx );
+
+		}
+
+		ctx.currentBufferGeometry = new BufferGeometry();
+		ctx.currentBufferVertices = [];
+		ctx.currentBufferUVs = [];
+		ctx.currentBufferFaces = [];
+
+		ctx.currentBufferFaceCount = 0;
+		ctx.currentBufferGroupFirstFaceID = 0;
+
+		ctx.previousMaterialID = null;
 
 	};
 
 	var makeMeshToCurrentGroup = function ( ctx ) {
 
-		ctx.currentGeometry.uvsNeedUpdate = true;
-		ctx.currentGeometry.computeVertexNormals();
+		if ( ctx.currentBufferFaceCount > 0 ) {
 
-		if ( ctx.currentGeometry.faces.length > 0 ) {
+			commitBufferGeometryGroup( ctx );
 
-			var mesh = new Mesh( ctx.currentGeometry, ctx.materialManager.getCurrentMaterialList() );
+		}
+
+		if ( ctx.currentBufferFaces.length > 0 ) {
+
+			ctx.currentBufferGeometry.setAttribute( 'position', new BufferAttribute( new Float32Array( ctx.currentBufferVertices ), 3 ) );
+			ctx.currentBufferGeometry.setAttribute( 'uv', new BufferAttribute( new Float32Array( ctx.currentBufferUVs ), 2 ) );
+			ctx.currentBufferGeometry.setIndex( ctx.currentBufferFaces );
+
+			ctx.currentBufferGeometry.uvsNeedUpdate = true;
+			ctx.currentBufferGeometry.computeVertexNormals();
+
+			const mesh = new Mesh( ctx.currentBufferGeometry, ctx.materialManager.getCurrentMaterialList() );
 
 			ctx.currentGroup.add( mesh );
 
 		}
+
+	};
+
+	var commitBufferGeometryGroup = function ( ctx ) {
+
+		// Make new out of group existing data
+		ctx.currentBufferGeometry.addGroup( ctx.currentBufferGroupFirstFaceID, ctx.currentBufferFaceCount * 3, ctx.previousMaterialID );
+
+		// Set everything ready for the next group to start
+		ctx.previousMaterialID = ctx.materialManager.getCurrentMaterialID();
+		ctx.currentBufferGroupFirstFaceID = ctx.currentBufferGroupFirstFaceID + ctx.currentBufferFaceCount * 3;
+		ctx.currentBufferFaceCount = 0;
+
+	};
+
+	var addFace = function ( ctx, a, b, c ) {
+
+		if ( ctx.materialManager.getCurrentMaterialID() !== ctx.previousMaterialID ) {
+
+			commitBufferGeometryGroup( ctx );
+
+		}
+
+		// Add new face
+		ctx.currentBufferFaceCount ++;
+		ctx.currentBufferFaces.push( a, b, c );
 
 	};
 
@@ -443,7 +492,7 @@ var RWXLoader = ( function () {
 				this.currentMaterialList = [];
 				this.currentMaterialSignature = "";
 
-			}
+			},
 
 		};
 
@@ -564,8 +613,6 @@ var RWXLoader = ( function () {
 
 			// Parsing RWX file content
 
-			const defaultSurface = [ 0.0, 0.0, 0.0 ];
-
 			var ctx = {
 				groupStack: [],
 				currentGroup: null,
@@ -573,8 +620,15 @@ var RWXLoader = ( function () {
 				transformStack: [],
 
 				currentTransform: new Matrix4(),
-				currentGeometry: null,
-				currentUVs: [],
+				currentBufferGeometry: null,
+				currentBufferVertices: [],
+				currentBufferUVs: [],
+				currentBufferFaces: [],
+
+				currentBufferFaceCount: 0,
+				currentBufferGroupFirstFaceID: 0,
+
+				previousMaterialID: null,
 
 				rwxClumpStack: [],
 				rwxProtoDict: {},
@@ -682,9 +736,8 @@ var RWXLoader = ( function () {
 
 					ctx.rwxProtoDict[ name ] = new Group();
 					ctx.currentTransform = new Matrix4();
-					ctx.currentGeometry = new Geometry();
-					ctx.currentGeometry.faceVertexUvs[ 0 ] = [];
-					ctx.currentUVs = [];
+
+					resetGeometry( ctx );
 
 					ctx.materialManager.currentRWXMaterial = new RWXMaterial();
 					ctx.currentGroup = ctx.rwxProtoDict[ name ];
@@ -701,9 +754,7 @@ var RWXLoader = ( function () {
 					ctx.currentGroup = transformBeforeProto;
 					ctx.currentTransform = groupBeforeProto;
 
-					ctx.currentGeometry = new Geometry();
-					ctx.currentGeometry.faceVertexUvs[ 0 ] = [];
-					ctx.currentUVs = [];
+					resetGeometry( ctx );
 
 					ctx.materialManager.resetCurrentMaterialList();
 
@@ -761,12 +812,7 @@ var RWXLoader = ( function () {
 
 					} );
 
-					var face = new Face3( vId[ 0 ], vId[ 1 ], vId[ 2 ] );
-					face.materialIndex = ctx.materialManager.getCurrentMaterialID();
-					ctx.currentGeometry.faces.push( face );
-					ctx.currentGeometry.faceVertexUvs[ 0 ].push( [
-						ctx.currentUVs[ vId[ 0 ] ], ctx.currentUVs[ vId[ 1 ] ], ctx.currentUVs[ vId[ 2 ] ]
-					] );
+					addFace( ctx, vId[ 0 ], vId[ 1 ], vId[ 2 ] );
 
 					continue;
 
@@ -782,19 +828,8 @@ var RWXLoader = ( function () {
 
 					} );
 
-					var face = new Face3( vId[ 0 ], vId[ 1 ], vId[ 2 ] );
-					face.materialIndex = ctx.materialManager.getCurrentMaterialID();
-					ctx.currentGeometry.faces.push( face );
-					face = new Face3( vId[ 0 ], vId[ 2 ], vId[ 3 ] );
-					face.materialIndex = ctx.materialManager.getCurrentMaterialID();
-					ctx.currentGeometry.faces.push( face );
-
- 					ctx.currentGeometry.faceVertexUvs[ 0 ].push( [
-						ctx.currentUVs[ vId[ 0 ] ], ctx.currentUVs[ vId[ 1 ] ], ctx.currentUVs[ vId[ 2 ] ]
-					] );
-					ctx.currentGeometry.faceVertexUvs[ 0 ].push( [
-						ctx.currentUVs[ vId[ 0 ] ], ctx.currentUVs[ vId[ 2 ] ], ctx.currentUVs[ vId[ 3 ] ]
-					] );
+					addFace( ctx, vId[ 0 ], vId[ 1 ], vId[ 2 ] );
+					addFace( ctx, vId[ 0 ], vId[ 2 ], vId[ 3 ] );
 
 					continue;
 
@@ -803,32 +838,30 @@ var RWXLoader = ( function () {
 				res = this.polygonRegex.exec( line );
 				if ( res != null ) {
 
-					var vLen = parseInt( res[ 2 ].match( this.integerRegex )[ 0 ] );
-					var vId = [];
-					res[ 3 ].match( this.integerRegex ).forEach( ( id ) => {
+					const polyLen = parseInt( res[ 2 ].match( this.integerRegex )[ 0 ] );
+					var polyIDs = [];
+					const polyStrIDs = res[ 3 ].match( this.integerRegex );
 
-						vId.unshift( parseInt( id ) - 1 );
+					for ( var polyI = 0; polyI < polyLen; polyI ++ ) {
 
-					} );
+						const id = polyStrIDs[ polyI ];
+						polyIDs.unshift( parseInt( id ) - 1 );
+
+					}
 
 					const [ newVertices, newUVs, newFaces ] =
-					triangulateFacesWithShapes( ctx.currentGeometry.vertices, ctx.currentUVs, vId, ctx.materialManager.getCurrentMaterialID() );
+					triangulateFacesWithShapes( ctx.currentBufferVertices, ctx.currentBufferUVs, polyIDs );
 
-					const preInsertionLength = ctx.currentGeometry.vertices.length;
-					ctx.currentGeometry.vertices.push( ...newVertices );
-					ctx.currentGeometry.faces.push( ...newFaces );
+					ctx.currentBufferVertices.push( ...newVertices );
+					ctx.currentBufferUVs.push( ...newUVs );
 
-					for ( var lf = 0; lf < newFaces.length; lf ++ ) {
+					for ( var lf = 0; lf < newFaces.length; lf += 3 ) {
 
-						const vid1 = newFaces[ lf ].a;
-						const vid2 = newFaces[ lf ].b;
-						const vid3 = newFaces[ lf ].c;
+						const vid1 = newFaces[ lf ];
+						const vid2 = newFaces[ lf + 1 ];
+						const vid3 = newFaces[ lf + 2 ];
 
-						ctx.currentGeometry.faceVertexUvs[ 0 ].push( [
-							newUVs[ vid1 - preInsertionLength ],
-							newUVs[ vid2 - preInsertionLength ],
-							newUVs[ vid3 - preInsertionLength ]
-						] );
+						addFace( ctx, vid1, vid2, vid3 );
 
 					}
 
@@ -848,7 +881,8 @@ var RWXLoader = ( function () {
 
 					var tmpVertex = new Vector4( vprops[ 0 ], vprops[ 1 ], vprops[ 2 ] );
 					tmpVertex.applyMatrix4( getFinalTransform( ctx ) );
-					ctx.currentGeometry.vertices.push( new Vector3( tmpVertex.x, tmpVertex.y, tmpVertex.z ) );
+
+					ctx.currentBufferVertices.push( tmpVertex.x, tmpVertex.y, tmpVertex.z );
 
 					if ( typeof ( res[ 7 ] ) != "undefined" ) {
 
@@ -859,11 +893,11 @@ var RWXLoader = ( function () {
 
 						} );
 
-						ctx.currentUVs.push( new Vector2( moreVprops[ 0 ], 1 - moreVprops[ 1 ] ) );
+						ctx.currentBufferUVs.push( moreVprops[ 0 ], 1 - moreVprops[ 1 ] );
 
 					} else {
 
-						ctx.currentUVs.push( new Vector2( 0.0, 0.0 ) );
+						ctx.currentBufferUVs.push( 0.0, 0.0 );
 
 					}
 
