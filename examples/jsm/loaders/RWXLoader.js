@@ -16,7 +16,7 @@ import {
 	Quaternion,
 	Plane,
 	Shape,
-	ShapeGeometry,
+	ShapeBufferGeometry,
 	TextureLoader,
 	RepeatWrapping,
 	FrontSide,
@@ -147,20 +147,19 @@ var RWXLoader = ( function () {
 
 			// Create the geometry (Three.js triangulation with ShapeGeometry)
 			var shape = new Shape( projVertices );
-			var geometry = new ShapeGeometry( shape );
+			var geometry = new ShapeBufferGeometry( shape );
 
 			// Transform geometry back to the initial coordinate system
 			geometry.applyMatrix4( _basis );
 
-			for ( var i = 0, lVertices = geometry.vertices.length; i < lVertices; i ++ ) {
+			const shapePositions = geometry.getAttribute( 'position' ).array;
+			const shapeIndices = geometry.getIndex().array;
 
-				newVertices.push( geometry.vertices[ i ].x, geometry.vertices[ i ].y, geometry.vertices[ i ].z );
+			newVertices.push( ...shapePositions );
 
-			}
+			for ( var i = 0, lFaces = shapeIndices.length; i < lFaces; i ++ ) {
 
-			for ( var i = 0, lFaces = geometry.faces.length; i < lFaces; i ++ ) {
-
-				faces.push( geometry.faces[ i ].a + offset, geometry.faces[ i ].b + offset, geometry.faces[ i ].c + offset );
+				faces.push( shapeIndices[ i ] + offset );
 
 			}
 
