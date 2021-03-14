@@ -56,11 +56,11 @@ var RWXLoader = ( function () {
 
 		ctx.transformStack.forEach( ( t ) => {
 
-			transform.multiply( t );
+			transform.premultiply( t );
 
 		} );
 
-		return transform.multiply( ctx.currentTransform );
+		return transform.premultiply( ctx.currentTransform );
 
 	};
 
@@ -361,6 +361,54 @@ var RWXLoader = ( function () {
 
 	};
 
+	var pushCurrentGroup = function ( ctx ) {
+
+		var group = new Group();
+		ctx.currentGroup.add( group );
+		ctx.groupStack.push( ctx.currentGroup );
+		ctx.currentGroup = group;
+
+	}
+
+	var popCurrentGroup = function ( ctx ) {
+
+		ctx.currentGroup = ctx.groupStack.pop();
+
+	}
+
+	var pushCurrentTransform = function ( ctx ) {
+
+		ctx.transformStack.push( ctx.currentTransform );
+		ctx.currentTransform = new Matrix4();
+
+	}
+
+	var popCurrentTransform = function ( ctx ) {
+
+		ctx.currentTransform = ctx.transformStack.pop();
+
+	}
+
+	var saveCurrentTransform = function ( ctx ) {
+
+		ctx.transformSaves.push( ctx.currentTransform.clone() );
+
+	}
+
+	var loadCurrentTransform = function ( ctx ) {
+
+		if ( ctx.transformSaves.length > 0 ) {
+
+			ctx.currentTransform = ctx.transformSaves.pop();
+
+		} else {
+
+			ctx.currentTransform = new Matrix4();
+
+		}
+
+	}
+
 	var RWXMaterial = ( function () {
 
 		function RWXMaterial() {
@@ -524,7 +572,9 @@ var RWXLoader = ( function () {
 		this.textureRegex = new RegExp( "^ *(texture) +([A-Za-z0-9_\\-]+) *(mask *([A-Za-z0-9_\\-]+))?.*$", 'i' );
 		this.colorRegex = new RegExp( "^ *(color)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){3}).*$", 'i' );
 		this.opacityRegex = new RegExp( "^ *(opacity)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$", 'i' );
+		this.identityRegex = new RegExp( "^ *(identity) *$", 'i' );
 		this.transformRegex = new RegExp( "^ *(transform)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){16}).*$", 'i' );
+		this.translateRegex = new RegExp( "^ *(translate)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){3}).*$", 'i' );
 		this.scaleRegex = new RegExp( "^ *(scale)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){3}).*$", 'i' );
 		this.rotateRegex = new RegExp( "^ *(rotate)(( +[-+]?[0-9]*){4})$", 'i' );
 		this.surfaceRegex = new RegExp( "^ *(surface)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){3}).*$", 'i' );
@@ -617,6 +667,7 @@ var RWXLoader = ( function () {
 				currentGroup: null,
 
 				transformStack: [],
+				transformSaves: [],
 
 				currentTransform: new Matrix4(),
 				currentBufferGeometry: null,
@@ -637,6 +688,9 @@ var RWXLoader = ( function () {
 
 			var transformBeforeProto = null;
 			var groupBeforeProto = null;
+
+			const scale_ten = new Matrix4();
+			scale_ten.makeScale( 10.0, 10.0, 10.0 );
 
 			const lines = str.split( /[\n\r]+/g );
 
@@ -670,15 +724,11 @@ var RWXLoader = ( function () {
 				res = this.clumpbeginRegex.exec( line );
 				if ( res != null ) {
 
-					var group = new Group();
-					ctx.currentGroup.add( group );
-					ctx.groupStack.push( group );
-					ctx.currentGroup = group;
-
+					makeMeshToCurrentGroup( ctx );
 					resetGeometry( ctx );
 
-					ctx.transformStack.push( ctx.currentTransform );
-					ctx.currentTransform = new Matrix4();
+					pushCurrentGroup( ctx );
+					pushCurrentTransform( ctx );
 
 					continue;
 
@@ -689,8 +739,8 @@ var RWXLoader = ( function () {
 
 					makeMeshToCurrentGroup( ctx );
 
-					ctx.currentGroup = ctx.groupStack.pop();
-					ctx.currentTransform = ctx.transformStack.pop();
+					popCurrentTransform( ctx );
+					popCurrentGroup( ctx );
 
 					resetGeometry( ctx );
 
@@ -703,13 +753,7 @@ var RWXLoader = ( function () {
 				res = this.transformbeginRegex.exec( line );
 				if ( res != null ) {
 
-					var group = new Group();
-					ctx.currentGroup.add( group );
-					ctx.groupStack.push( group );
-					ctx.currentGroup = group;
-
-					ctx.transformStack.push( ctx.currentTransform );
-					ctx.currentTransform = new Matrix4();
+					saveCurrentTransform( ctx );
 
 					continue;
 
@@ -718,8 +762,7 @@ var RWXLoader = ( function () {
 				res = this.transformendRegex.exec( line );
 				if ( res != null ) {
 
-					ctx.currentGroup = ctx.groupStack.pop();
-					ctx.currentTransform = ctx.transformStack.pop();
+					loadCurrentTransform( ctx );
 
 					continue;
 
@@ -932,6 +975,13 @@ var RWXLoader = ( function () {
 
 				}
 
+				res = this.identityRegex.exec( line );
+				if ( res != null ) {
+
+					ctx.currentTransform.identity();
+
+				}
+
 				res = this.transformRegex.exec( line );
 				if ( res != null ) {
 
@@ -944,7 +994,38 @@ var RWXLoader = ( function () {
 
 					if ( tprops.length == 16 ) {
 
+						// Important Note: it seems the AW client always acts as if this element (which is related to the projection plane)
+						// was equal to 1 when it was set 0, hence why we always override this.
+						if ( tprops[15] == 0.0  ) {
+
+							tprops[15] = 1;
+
+						}
+
 						ctx.currentTransform.fromArray( tprops );
+
+					}
+
+					continue;
+
+				}
+
+				res = this.translateRegex.exec( line );
+				if ( res != null ) {
+
+					var tprops = [];
+					res[ 2 ].match( this.floatRegex ).forEach( ( x ) => {
+
+						tprops.push( parseFloat( x ) );
+
+					} );
+
+					var translateM = new Matrix4();
+
+					if ( tprops.length == 3 ) {
+
+						translateM.makeTranslation( tprops[ 0 ], tprops[ 1 ], tprops[ 2 ] );
+						ctx.currentTransform.premultiply( translateM );
 
 					}
 
@@ -1099,14 +1180,9 @@ var RWXLoader = ( function () {
 
 			}
 
-			// We're done, return the root group to get the whole object, we take the decadecimal unit into account
-			var scale_ten = new Matrix4();
-			scale_ten.makeScale( 10.0, 10.0, 10.0 );
-
-			ctx.groupStack[ 0 ].applyMatrix4( scale_ten );
-
+			// We're done, return the root group to get the whole object, we take the decameter unit into account
+			ctx.groupStack[ 0 ].applyMatrix4( scale_ten )
 			return ctx.groupStack[ 0 ];
-
 		}
 
 	} );
