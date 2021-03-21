@@ -369,7 +369,7 @@ var RWXLoader = ( function () {
 
 	};
 
-	var addFace = function ( ctx, a, b, c ) {
+	var addTriangle = function ( ctx, a, b, c ) {
 
 		if ( ctx.materialManager.getCurrentMaterialID() !== ctx.previousMaterialID ) {
 
@@ -380,6 +380,49 @@ var RWXLoader = ( function () {
 		// Add new face
 		ctx.currentBufferFaceCount ++;
 		ctx.currentBufferFaces.push( a, b, c );
+
+	};
+
+	var addQuad = function ( ctx, a, b, c, d ) {
+
+		if ( ctx.materialManager.getCurrentMaterialID() !== ctx.previousMaterialID ) {
+
+			commitBufferGeometryGroup( ctx );
+
+		}
+
+		// Add new face
+		ctx.currentBufferFaceCount += 2;
+		ctx.currentBufferFaces.push( a, b, c );
+		ctx.currentBufferFaces.push( a, c, d );
+
+	};
+
+	var addPolygon = function ( ctx, indices ) {
+
+		if ( ctx.materialManager.getCurrentMaterialID() !== ctx.previousMaterialID ) {
+
+			commitBufferGeometryGroup( ctx );
+
+		}
+
+		const [ newVertices, newUVs, newFaces ] =
+			triangulateFacesWithShapes( ctx.currentBufferVertices, ctx.currentBufferUVs, indices );
+
+		ctx.currentBufferVertices.push( ...newVertices );
+		ctx.currentBufferUVs.push( ...newUVs );
+
+		for ( var lf = 0; lf < newFaces.length; lf += 3 ) {
+
+			const a = newFaces[ lf ];
+			const b = newFaces[ lf + 1 ];
+			const c = newFaces[ lf + 2 ];
+
+			// Add new face
+			ctx.currentBufferFaceCount ++;
+			ctx.currentBufferFaces.push( a, b, c );
+
+		}
 
 	};
 
@@ -428,6 +471,14 @@ var RWXLoader = ( function () {
 			ctx.currentTransform = new Matrix4();
 
 		}
+
+	};
+
+	var startEdgeGeometry = function ( ctx ) {
+
+	};
+
+	var stopEdgeGeometry = function ( ctx ) {
 
 	};
 
@@ -885,7 +936,7 @@ var RWXLoader = ( function () {
 
 					} );
 
-					addFace( ctx, vId[ 0 ], vId[ 1 ], vId[ 2 ] );
+					addTriangle( ctx, vId[ 0 ], vId[ 1 ], vId[ 2 ] );
 
 					continue;
 
@@ -901,8 +952,7 @@ var RWXLoader = ( function () {
 
 					} );
 
-					addFace( ctx, vId[ 0 ], vId[ 1 ], vId[ 2 ] );
-					addFace( ctx, vId[ 0 ], vId[ 2 ], vId[ 3 ] );
+					addQuad( ctx, vId[ 0 ], vId[ 1 ], vId[ 2 ], vId[ 3 ] );
 
 					continue;
 
@@ -922,21 +972,7 @@ var RWXLoader = ( function () {
 
 					}
 
-					const [ newVertices, newUVs, newFaces ] =
-					triangulateFacesWithShapes( ctx.currentBufferVertices, ctx.currentBufferUVs, polyIDs );
-
-					ctx.currentBufferVertices.push( ...newVertices );
-					ctx.currentBufferUVs.push( ...newUVs );
-
-					for ( var lf = 0; lf < newFaces.length; lf += 3 ) {
-
-						const vid1 = newFaces[ lf ];
-						const vid2 = newFaces[ lf + 1 ];
-						const vid3 = newFaces[ lf + 2 ];
-
-						addFace( ctx, vid1, vid2, vid3 );
-
-					}
+					addPolygon( ctx, polyIDs );
 
 					continue;
 
