@@ -480,14 +480,6 @@ var RWXLoader = ( function () {
 
 	};
 
-	var startEdgeGeometry = function ( ctx ) {
-
-	};
-
-	var stopEdgeGeometry = function ( ctx ) {
-
-	};
-
 	var RWXMaterial = ( function () {
 
 		function RWXMaterial() {
