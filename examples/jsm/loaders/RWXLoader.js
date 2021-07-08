@@ -65,11 +65,12 @@ function getFinalTransform( ctx ) {
 
 }
 
-function triangulateFacesWithShapes( vertices, loop ) {
+function triangulateFacesWithShapes( vertices, uvs, loop ) {
 
 	// Mostly crediting @neeh for their answer: https://stackoverflow.com/a/42402681
 	const _ctr = new Vector3();
 
+	let _basis = new Matrix4();
 	const _plane = new Plane();
 	const _q = new Quaternion();
 	const _y = new Vector3();
@@ -80,8 +81,11 @@ function triangulateFacesWithShapes( vertices, loop ) {
 
 	let _tmp = new Vector3();
 
+	let newVertices = [];
+	let newUvs = [];
 	let faces = [];
 
+	let offset = vertices.length / 3;
 	let vertexMap = {};
 
 	// Compute centroid
@@ -127,6 +131,8 @@ function triangulateFacesWithShapes( vertices, loop ) {
 	_x.copy( X ).applyQuaternion( _q );
 	_y.crossVectors( _x, _z );
 	_y.normalize();
+	_basis.makeBasis( _x, _y, _z );
+	_basis.setPosition( _ctr );
 
 	// Project the 3D vertices on the 2D plane
 	let projVertices = [];
@@ -135,6 +141,7 @@ function triangulateFacesWithShapes( vertices, loop ) {
 		const currentVertex = new Vector3( vertices[ loop[ i ] * 3 ], vertices[ loop[ i ] * 3 + 1 ], vertices[ loop[ i ] * 3 + 2 ] );
 		_tmp.subVectors( currentVertex, _ctr );
 		projVertices.push( new Vector2( _tmp.dot( _x ), _tmp.dot( _y ) ) );
+		newUvs.push( uvs[ loop[ i ] * 2 ], uvs[ loop[ i ] * 2 + 1 ] );
 
 	}
 
@@ -142,16 +149,36 @@ function triangulateFacesWithShapes( vertices, loop ) {
 	let shape = new Shape( projVertices );
 	let geometry = new ShapeBufferGeometry( shape );
 
+	geometry.applyMatrix4( _basis );
+
+	let bufferPosition = geometry.getAttribute( 'position' );
 	const shapeIndices = geometry.getIndex().array;
+
+	/*
+	* Replace the positions for each vertex in the newly computed (flat and planar) polygon with the ones from the original
+	* set of vertices it was fed with, thus "sealing" the geometry perfectly despite the vertices being duplicated.
+	*/
+	for ( let i = 0, lVertices = bufferPosition.count; i < lVertices; i ++ ) {
+
+		bufferPosition.setXYZ(
+			i,
+			vertices[ vertexMap[ i ] * 3 ],
+			vertices[ vertexMap [ i ] * 3 + 1 ],
+			vertices[ vertexMap [ i ] * 3 + 2 ]
+		);
+
+	}
 
 	// Use the vertex indices from each newly computed 2D face to extend our current set
 	for ( let i = 0, lFaces = shapeIndices.length; i < lFaces; i ++ ) {
 
-		faces.push( vertexMap[ shapeIndices[ i ] ] );
+		faces.push( shapeIndices[ i ] + offset );
 
 	}
 
-	return faces;
+	newVertices.push( ...bufferPosition.array );
+
+	return [ newVertices, newUvs, faces ];
 
 }
 
@@ -418,11 +445,23 @@ function addPolygon( ctx, indices ) {
 
 	}
 
-	const newFaces =
-		triangulateFacesWithShapes( ctx.currentBufferVertices, indices );
+	const [ newVertices, newUVs, newFaces ] =
+		triangulateFacesWithShapes( ctx.currentBufferVertices, ctx.currentBufferUVs, indices );
 
-	ctx.currentBufferFaceCount += newFaces.length / 3;
-	ctx.currentBufferFaces.push( ...newFaces )
+	ctx.currentBufferVertices.push( ...newVertices );
+	ctx.currentBufferUVs.push( ...newUVs );
+
+	for ( let lf = 0; lf < newFaces.length; lf += 3 ) {
+
+		const a = newFaces[ lf ];
+		const b = newFaces[ lf + 1 ];
+		const c = newFaces[ lf + 2 ];
+
+		// Add new face
+		ctx.currentBufferFaceCount ++;
+		ctx.currentBufferFaces.push( a, b, c );
+
+	}
 
 }
 
@@ -624,40 +663,38 @@ class RWXMaterialManager {
 
 class RWXLoader extends Loader {
 
-	integerRegex = new RegExp( "([-+]?[0-9]+)", 'g' );
-	floatRegex = new RegExp( "([+-]?([0-9]+([.][0-9]*)?|[.][0-9]+))", 'g' );
-	nonCommentRegex = new RegExp( "^(.*)#", 'g' );
-	modelbeginRegex = new RegExp( "^ *(modelbegin).*$", 'i' );
-	modelendRegex = new RegExp( "^ *(modelend).*$", 'i' );
-	clumpbeginRegex = new RegExp( "^ *(clumpbegin).*$", 'i' );
-	clumpendRegex = new RegExp( "^ *(clumpend).*$", 'i' );
-	transformbeginRegex = new RegExp( "^ *(transformbegin).*$", 'i' );
-	transformendRegex = new RegExp( "^ *(transformend).*$", 'i' );
-	protobeginRegex = new RegExp( "^ *(protobegin) +([A-Za-z0-9_\\-]+).*$", 'i' );
-	protoinstanceRegex = new RegExp( "^ *(protoinstance) +([A-Za-z0-9_\\-]+).*$", 'i' );
-	protoendRegex = new RegExp( "^ *(protoend).*$", 'i' );
-	vertexRegex = new RegExp(
-		"^ *(vertex|vertexext)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){3}) *(uv(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){2}))?.*$",
-		'i' );
-	polygonRegex = new RegExp( "^ *(polygon|polygonext)( +[0-9]+)(( +[0-9]+)+) ?.*$", 'i' );
-	quadRegex = new RegExp( "^ *(quad|quadext)(( +([0-9]+)){4}).*$", 'i' );
-	triangleRegex = new RegExp( "^ *(triangle|triangleext)(( +([0-9]+)){3}).*$", 'i' );
-	textureRegex = new RegExp( "^ *(texture) +([A-Za-z0-9_\\-]+) *(mask *([A-Za-z0-9_\\-]+))?.*$", 'i' );
-	colorRegex = new RegExp( "^ *(color)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){3}).*$", 'i' );
-	opacityRegex = new RegExp( "^ *(opacity)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$", 'i' );
-	identityRegex = new RegExp( "^ *(identity) *$", 'i' );
-	transformRegex = new RegExp( "^ *(transform)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){16}).*$", 'i' );
-	translateRegex = new RegExp( "^ *(translate)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){3}).*$", 'i' );
-	scaleRegex = new RegExp( "^ *(scale)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){3}).*$", 'i' );
-	rotateRegex = new RegExp( "^ *(rotate)(( +[-+]?[0-9]*){4})$", 'i' );
-	surfaceRegex = new RegExp( "^ *(surface)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){3}).*$", 'i' );
-	ambientRegex = new RegExp( "^ *(ambient)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$", 'i' );
-	diffuseRegex = new RegExp( "^ *(diffuse)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$", 'i' );
-	specularRegex = new RegExp( "^ *(specular)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$", 'i' );
-	materialModeRegex = new RegExp( "^ *((add)?materialmode(s)?) +([A-Za-z0-9_\\-]+).*$", 'i' );
-	collisionRegex = new RegExp( "^ *(collision) +(on|off).*$", 'i' );
-	lightsamplingRegex = new RegExp( "^ *(lightsampling) +(facet|vertex).*$", 'i' );
-	geometrysamplingRegex = new RegExp( "^ *(geometrysampling) +(pointcloud|wireframe|solid).*$", 'i' );
+	integerRegex = /([-+]?[0-9]+)/g;
+	floatRegex = /([+-]?([0-9]+([.][0-9]*)?|[.][0-9]+))/g;
+	nonCommentRegex = /^(.*)#/g;
+	modelbeginRegex = /^ *(modelbegin).*$/i;
+	modelendRegex = /^ *(modelend).*$/i;
+	clumpbeginRegex = /^ *(clumpbegin).*$/i;
+	clumpendRegex = /^ *(clumpend).*$/i;
+	transformbeginRegex = /^ *(transformbegin).*$/i;
+	transformendRegex = /^ *(transformend).*$/i;
+	protobeginRegex = /^ *(protobegin) +([A-Za-z0-9_\-]+).*$/i;
+	protoinstanceRegex = /^ *(protoinstance) +([A-Za-z0-9_\-]+).*$/i;
+	protoendRegex = /^ *(protoend).*$/i;
+	vertexRegex = /^ *(vertex|vertexext)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){3}) *(uv(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){2}))?.*$/i;
+	polygonRegex = /^ *(polygon|polygonext)( +[0-9]+)(( +[0-9]+)+) ?.*$/i;
+	quadRegex = /^ *(quad|quadext)(( +([0-9]+)){4}).*$/i;
+	triangleRegex = /^ *(triangle|triangleext)(( +([0-9]+)){3}).*$/i;
+	textureRegex = /^ *(texture) +([A-Za-z0-9_\-]+) *(mask *([A-Za-z0-9_\-]+))?.*$/i;
+	colorRegex = /^ *(color)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){3}).*$/i;
+	opacityRegex = /^ *(opacity)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$/i;
+	identityRegex = /^ *(identity) *$/i;
+	transformRegex = /^ *(transform)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){16}).*$/i;
+	translateRegex = /^ *(translate)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){3}).*$/i;
+	scaleRegex = /^ *(scale)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){3}).*$/i;
+	rotateRegex = /^ *(rotate)(( +[-+]?[0-9]*){4})$/i;
+	surfaceRegex = /^ *(surface)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){3}).*$/i;
+	ambientRegex = /^ *(ambient)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$/i;
+	diffuseRegex = /^ *(diffuse)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$/i;
+	specularRegex = /^ *(specular)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$/i;
+	materialModeRegex = /^ *((add)?materialmode(s)?) +([A-Za-z0-9_\-]+).*$/i;
+	collisionRegex = /^ *(collision) +(on|off).*$/i;
+	lightsamplingRegex = /^ *(lightsampling) +(facet|vertex).*$/i;
+	geometrysamplingRegex = /^ *(geometrysampling) +(pointcloud|wireframe|solid).*$/i;
 
 	jsZip = null;
 	jsZipUtils = null;
